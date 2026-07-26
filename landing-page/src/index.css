@@ -1,0 +1,181 @@
+@import 'tailwindcss';
+
+/* ------------------------------------------------------------------
+   Sarvam design tokens.
+   Naming mirrors sarvam.ai: tx = text, st = stroke, sf = surface,
+   sr-* = semantic ramps.
+   ------------------------------------------------------------------ */
+@theme {
+  --font-matter:
+    'Switzer', ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, sans-serif;
+  --font-season:
+    'Instrument Serif', 'Tiro Devanagari Hindi', ui-serif, Georgia, serif;
+  --font-deva: 'Tiro Devanagari Hindi', 'Instrument Serif', ui-serif, serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+
+  /* text */
+  --color-tx: #1e2033;
+  --color-tx-secondary: #3a3f5c;
+  --color-tx-tertiary: #6b7092;
+
+  /* surface */
+  --color-sf: #f5f5f3;
+  --color-sf-secondary: #f0f1f5;
+  --color-sf-tertiary: #e9e9e4;
+
+  /* stroke */
+  --color-st: #1e2033;
+  --color-st-secondary: #dedee0;
+
+  /* indigo ramp */
+  --color-sr-indigo-50: #f2f4ff;
+  --color-sr-indigo-100: #d5e2ff;
+  --color-sr-indigo-200: #c7d2fe;
+  --color-sr-indigo-300: #a5b4fc;
+  --color-sr-indigo-400: #818cf8;
+  --color-sr-indigo-600: #6366f1;
+  --color-sr-indigo-700: #4250d5;
+  --color-sr-indigo-900: #2a2f6b;
+
+  /* green ramp */
+  --color-sr-green-50: #e3f1d8;
+  --color-sr-green-200: #c8e4b0;
+  --color-sr-green-600: #83c040;
+  --color-sr-green-800: #496d21;
+
+  /* warm ramp — the "yaadein" accent, from Sarvam's #3d2b1a family */
+  --color-sr-warm-50: #f6efe6;
+  --color-sr-warm-200: #e6d3ba;
+  --color-sr-warm-600: #c08827;
+  --color-sr-warm-900: #3d2b1a;
+
+  --color-sr-rose-100: #f7e2dd;
+  --color-sr-rose-600: #c43d2b;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    background-color: var(--color-sf);
+    color: var(--color-tx);
+    font-family: var(--font-matter);
+    font-synthesis-weight: none;
+  }
+
+  /* keep anchored sections clear of the sticky header */
+  section[id] {
+    scroll-margin-top: 72px;
+  }
+
+  ::selection {
+    background: var(--color-sr-indigo-100);
+    color: var(--color-tx);
+  }
+}
+
+@layer components {
+  /* Sarvam's small uppercase mono eyebrow */
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-tx-tertiary);
+  }
+
+  .card {
+    background: #fff;
+    border: 1px solid var(--color-st-secondary);
+    border-radius: 24px;
+  }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    border-radius: 9999px;
+    font-size: 15px;
+    font-weight: 500;
+    padding: 0.7rem 1.35rem;
+    transition:
+      transform 0.18s ease,
+      background-color 0.18s ease,
+      border-color 0.18s ease,
+      color 0.18s ease;
+  }
+
+  .pill-primary {
+    background: var(--color-tx);
+    color: #fff;
+  }
+  .pill-primary:hover {
+    background: var(--color-sr-indigo-700);
+  }
+
+  .pill-ghost {
+    background: #fff;
+    color: var(--color-tx);
+    border: 1px solid var(--color-st-secondary);
+  }
+  .pill-ghost:hover {
+    border-color: var(--color-tx);
+  }
+}
+
+/* Marquee ticker, as on sarvam.ai */
+@keyframes ticker {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+.animate-ticker {
+  animation: ticker 32s linear infinite;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.reveal {
+  animation: rise 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Waveform bars in the hero session panel */
+@keyframes bar {
+  0%,
+  100% {
+    transform: scaleY(0.28);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+.wave-bar {
+  animation: bar 1.15s ease-in-out infinite;
+  transform-origin: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

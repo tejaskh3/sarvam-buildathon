@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="hi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Yaadein</title>
+<style>
+  :root { --ink:#191A22; --paper:#F5F5F8; --accent:#2E3A8C; --soft:#8A8EA3; --ok:#2F6B4F; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:ui-sans-serif,-apple-system,"Segoe UI",sans-serif; background:var(--paper); color:var(--ink);
+         min-height:100vh; display:flex; flex-direction:column; align-items:center; }
+  header { padding:2rem 1rem 0.5rem; text-align:center; }
+  header h1 { font-family:Georgia,serif; font-size:2rem; margin:0; }
+  header p { color:var(--soft); margin:0.3rem 0 0; font-size:0.9rem; }
+  #log { width:min(42rem,92vw); flex:1; padding:1rem 0 8rem; }
+  .msg { max-width:80%; padding:0.7rem 1rem; border-radius:12px; margin:0.5rem 0; line-height:1.5; font-size:1.05rem; }
+  .agent { background:#fff; border:1px solid #E2E3EB; }
+  .user  { background:var(--accent); color:#fff; margin-left:auto; }
+  .sys   { color:var(--soft); font-size:0.8rem; text-align:center; background:none; max-width:100%; }
+  #controls { position:fixed; bottom:0; left:0; right:0; padding:1.25rem; display:flex; justify-content:center; gap:1rem;
+              background:linear-gradient(transparent, var(--paper) 35%); }
+  button { font-size:1.05rem; border:none; border-radius:999px; padding:1rem 2.2rem; cursor:pointer; font-weight:600; }
+  #start { background:var(--accent); color:#fff; }
+  #talk  { background:#fff; border:2px solid var(--accent); color:var(--accent); display:none; user-select:none; -webkit-user-select:none; touch-action:none; }
+  #talk.rec { background:#9B3324; border-color:#9B3324; color:#fff; }
+  #talk:disabled { opacity:0.5; }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--ok); margin-right:6px; vertical-align:middle; }
+</style>
+</head>
+<body>
+<header>
+  <h1>यादें</h1>
+  <p>agent-led · hold the button to reply by voice</p>
+</header>
+<div id="log"></div>
+<div id="controls">
+  <button id="start">Start session</button>
+  <button id="talk">🎙️ Hold to talk</button>
+</div>
+
+<script>
+const log = document.getElementById("log");
+const startBtn = document.getElementById("start");
+const talkBtn = document.getElementById("talk");
+let sessionId = null, audioCtx = null, mediaStream = null, processor = null, source = null;
+let recording = false, chunks = [];
+
+function add(cls, text) {
+  const d = document.createElement("div");
+  d.className = "msg " + cls;
+  d.textContent = text;
+  log.appendChild(d);
+  d.scrollIntoView({ behavior: "smooth" });
+  return d;
+}
+
+function playB64Wav(b64) {
+  return new Promise((resolve) => {
+    const a = new Audio("data:audio/wav;base64," + b64);
+    a.onended = resolve;
+    a.onerror = resolve;
+    a.play().catch(resolve);
+  });
+}
+
+// ── PCM16 mono 16k WAV encoder ──────────────────────────────────
+function encodeWav(float32chunks, sampleRate) {
+  let len = 0; for (const c of float32chunks) len += c.length;
+  const pcm = new Int16Array(len);
+  let o = 0;
+  for (const c of float32chunks) for (let i = 0; i < c.length; i++) {
+    const s = Math.max(-1, Math.min(1, c[i]));
+    pcm[o++] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+  }
+  const buf = new ArrayBuffer(44 + pcm.length * 2);
+  const v = new DataView(buf);
+  const W = (off, str) => { for (let i = 0; i < str.length; i++) v.setUint8(off + i, str.charCodeAt(i)); };
+  W(0,"RIFF"); v.setUint32(4, 36 + pcm.length*2, true); W(8,"WAVE"); W(12,"fmt ");
+  v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+  v.setUint32(24,sampleRate,true); v.setUint32(28,sampleRate*2,true);
+  v.setUint16(32,2,true); v.setUint16(34,16,true); W(36,"data");
+  v.setUint32(40, pcm.length*2, true);
+  new Int16Array(buf, 44).set(pcm);
+  return new Blob([buf], { type:"audio/wav" });
+}
+
+async function initMic() {
+  mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount:1, echoCancellation:true, noiseSuppression:true } });
+  audioCtx = new AudioContext({ sampleRate: 16000 });
+  source = audioCtx.createMediaStreamSource(mediaStream);
+  processor = audioCtx.createScriptProcessor(4096, 1, 1);
+  processor.onaudioprocess = (e) => { if (recording) chunks.push(new Float32Array(e.inputBuffer.getChannelData(0))); };
+  source.connect(processor); processor.connect(audioCtx.destination);
+}
+
+startBtn.onclick = async () => {
+  startBtn.disabled = true; startBtn.textContent = "Starting…";
+  try {
+    await initMic();
+    const r = await fetch("/api/session/start", { method:"POST" });
+    const j = await r.json();
+    if (j.error) throw new Error(j.error);
+    sessionId = j.sessionId;
+    startBtn.style.display = "none";
+    talkBtn.style.display = "inline-block";
+    add("sys", "session started — the agent opens");
+    add("agent", j.text);
+    await playB64Wav(j.audio);
+  } catch (e) {
+    add("sys", "error: " + e.message);
+    startBtn.disabled = false; startBtn.textContent = "Start session";
+  }
+};
+
+async function stopAndSend() {
+  if (!recording) return;
+  recording = false;
+  talkBtn.classList.remove("rec");
+  talkBtn.textContent = "🎙️ Hold to talk";
+  talkBtn.disabled = true;
+  const wav = encodeWav(chunks, audioCtx.sampleRate);
+  chunks = [];
+  if (wav.size < 4000) { talkBtn.disabled = false; return; } // too short
+  const thinking = add("sys", "…");
+  try {
+    const r = await fetch("/api/turn", { method:"POST", headers:{ "x-session-id": sessionId }, body: wav });
+    const j = await r.json();
+    thinking.remove();
+    if (j.error) { add("sys", "error: " + j.error); }
+    else if (!j.transcript) { add("sys", "didn't catch that — try again"); }
+    else {
+      add("user", j.transcript);
+      add("agent", j.text);
+      await playB64Wav(j.audio);
+    }
+  } catch (e) { thinking.remove(); add("sys", "error: " + e.message); }
+  talkBtn.disabled = false;
+}
+
+function startRec(e) { e.preventDefault(); if (talkBtn.disabled) return; recording = true; chunks = []; talkBtn.classList.add("rec"); talkBtn.textContent = "● Listening — release to send"; }
+talkBtn.addEventListener("mousedown", startRec);
+talkBtn.addEventListener("touchstart", startRec);
+["mouseup","mouseleave","touchend","touchcancel"].forEach(ev => talkBtn.addEventListener(ev, stopAndSend));
+</script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "name": "yaadein",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "start": "node app/server.js",
+    "build": "cd landing-page && npm ci && npm run build"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
