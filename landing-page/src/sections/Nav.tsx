@@ -2,10 +2,10 @@ import { useEffect, useState } from 'react'
 import { Logo } from '../components/Logo'
 
 const links = [
-  { href: '#personas', label: 'Who it’s for' },
-  { href: '#loop', label: 'How it remembers' },
-  { href: '#experience', label: 'What it’s like' },
-  { href: '#family', label: 'For the family' },
+  { href: '#personas', label: 'Who this is for' },
+  { href: '#loop', label: 'How we remember' },
+  { href: '#experience', label: 'How to use' },
+  { href: '#about', label: 'About us' },
 ]
 
 export function Ticker() {

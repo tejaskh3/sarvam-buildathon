@@ -55,7 +55,7 @@ export function Hero() {
               <Arrow />
             </a>
             <a href="#loop" className="pill pill-ghost">
-              See how it remembers
+              See how we remember
             </a>
           </div>
         </Reveal>

@@ -6,7 +6,7 @@ export function Loop() {
     <Section id="loop" tone="ink">
       <SectionHead
         invert
-        eyebrow="the whole idea"
+        eyebrow="how we remember"
         title="Ask. Remember. Come back. Notice."
         lede="Most days there is nobody to talk to, and the talking is the thing that helps. Yaadein turns those ten minutes into a conversation that continues — and, quietly, into the first honest picture the family has of how things are going."
       />

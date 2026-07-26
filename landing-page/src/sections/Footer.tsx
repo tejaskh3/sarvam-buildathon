@@ -39,7 +39,7 @@ export function Footer() {
                 href="#loop"
                 className="pill border border-white/20 bg-transparent text-white hover:border-white/60"
               >
-                See how it remembers
+                See how we remember
               </a>
             </div>
           </Reveal>
