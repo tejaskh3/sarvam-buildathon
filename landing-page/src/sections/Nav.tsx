@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Logo } from '../components/Logo'
 
 const links = [
   { href: '#personas', label: 'Who it’s for' },
@@ -54,9 +55,7 @@ export function Nav() {
     >
       <nav className="mx-auto flex w-full max-w-[1180px] items-center justify-between px-5 py-3.5 sm:px-8">
         <a href="#top" className="flex items-center gap-2.5">
-          <span className="bg-tx flex h-8 w-8 items-center justify-center rounded-[9px]">
-            <Mark />
-          </span>
+          <Logo size={34} />
           <span className="font-season text-tx text-[20px] leading-none">
             Yaadein
           </span>
@@ -113,16 +112,3 @@ export function Nav() {
   )
 }
 
-function Mark() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 32 32" fill="none" aria-hidden>
-      <path
-        d="M9 11.5v4.2c0 2.2 1.5 3.6 3.6 3.6s3.6-1.4 3.6-3.6v-4.2M16.2 15.7c0 2.2 1.5 3.6 3.6 3.6s3.6-1.4 3.6-3.6v-4.2"
-        stroke="#fff"
-        strokeWidth="2"
-        strokeLinecap="round"
-      />
-      <circle cx="16" cy="23.5" r="1.5" fill="#818cf8" />
-    </svg>
-  )
-}

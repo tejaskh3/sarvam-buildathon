@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Orb, VoiceLabel, type Voice } from '../components/Orb'
 import { PhoneGate, clearStoredPhone, getStoredPhone } from '../components/PhoneGate'
+import { Logo } from '../components/Logo'
 
 /* ------------------------------------------------------------------
    Try Yaadein — a live voice session.
@@ -27,7 +28,8 @@ const MAX_REC_MS = 25000 // Saaras REST caps at 30s — send before we hit it
 export function TryPage() {
   const [voice, setVoice] = useState<Voice>('idle')
   const [busy, setBusy] = useState(false)
-  const [lines, setLines] = useState<{ who: 'agent' | 'you'; text: string; photo?: string }[]>([])
+  type PhotoCard = { url: string; event: string; place: string; year: string; people: string[] }
+  const [lines, setLines] = useState<{ who: 'agent' | 'you'; text: string; photo?: PhotoCard }[]>([])
   const [error, setError] = useState<string | null>(null)
   const [contract, setContract] = useState<Record<string, unknown> | null>(null)
   /* access = an allowlisted 10-digit number; remembered on this device */
@@ -37,13 +39,6 @@ export function TryPage() {
   phoneRef.current = phone
   const gateRef = useRef<typeof setGateOpen>(setGateOpen)
   gateRef.current = setGateOpen
-  const endRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    // scroll the transcript box only — never yank the whole page
-    endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-  }, [lines])
-
   const voiceRef = useRef<Voice>('idle')
   const busyRef = useRef(false)
   const levelRef = useRef(0)
@@ -249,7 +244,7 @@ export function TryPage() {
         const j = await r.json()
         if (j.error) throw new Error(j.error)
         sessionRef.current = j.sessionId
-        setLines((l) => [...l, { who: 'agent', text: j.text, photo: j.photo?.url }])
+        setLines((l) => [...l, { who: 'agent', text: j.text, photo: j.photo ?? undefined }])
         await play(j.audio)
       }
       recRef.current = { chunks: [], lastVoice: Date.now(), startedAt: Date.now() }
@@ -365,29 +360,48 @@ export function TryPage() {
           </div>
         )}
 
-        {/* full transcript, scrollable — the whole conversation stays reachable */}
-        <div className="mt-6 max-h-[320px] w-full space-y-2 overflow-y-auto pr-1">
-          {lines.map((l, i) => (
-            <div
-              key={i}
-              className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed ${
-                l.who === 'agent'
-                  ? 'border-sr-pink-200 bg-sr-pink-50 text-tx border'
-                  : 'bg-sr-purple-600 ml-auto text-white'
-              }`}
-            >
-              {l.photo && (
-                <img
-                  src={`${API}${l.photo}`}
-                  alt="A family memory"
-                  className="photo-pop mb-2.5 w-full max-w-[340px] rounded-xl shadow-md"
-                />
+        {/* voice-first: no chat history — only Yaadein's latest words,
+            centered like a caption under the orb */}
+        {(() => {
+          const lastAgent = [...lines].reverse().find((l) => l.who === 'agent')
+          if (!lastAgent) return null
+          return (
+            <div key={lines.length} className="caption-fade mt-8 flex w-full flex-col items-center text-center">
+              {lastAgent.photo && (
+                <figure className="photo-pop mb-5 w-full max-w-[360px] rotate-[-1deg] rounded-2xl bg-white p-3 pb-4 shadow-[0_10px_36px_rgba(30,32,51,0.16)]">
+                  <img
+                    src={`${API}${lastAgent.photo.url}`}
+                    alt={lastAgent.photo.event || 'A family memory'}
+                    className="aspect-[4/3] w-full rounded-xl object-cover"
+                  />
+                  <figcaption className="mt-3 text-center">
+                    {(lastAgent.photo.event || lastAgent.photo.place || lastAgent.photo.year) && (
+                      <p className="font-season text-tx text-[16px] leading-snug">
+                        {lastAgent.photo.event || 'A family moment'}
+                        {(lastAgent.photo.place || lastAgent.photo.year) && (
+                          <span className="text-tx-tertiary">
+                            {' '}· {[lastAgent.photo.place, lastAgent.photo.year].filter(Boolean).join(', ')}
+                          </span>
+                        )}
+                      </p>
+                    )}
+                    {lastAgent.photo.people.length > 0 && (
+                      <p className="text-tx-secondary mt-1 text-[12.5px]">
+                        In this photo: {lastAgent.photo.people.join(' · ')}
+                      </p>
+                    )}
+                    <p className="text-tx-tertiary mt-1 font-mono text-[9px] tracking-[0.14em] uppercase">
+                      Shared by your family
+                    </p>
+                  </figcaption>
+                </figure>
               )}
-              {l.text}
+              <p className="text-tx max-w-[540px] text-[17px] leading-relaxed text-balance">
+                {lastAgent.text}
+              </p>
             </div>
-          ))}
-          <div ref={endRef} />
-        </div>
+          )
+        })()}
       </main>
     </div>
   )
@@ -416,19 +430,7 @@ function MicIcon() {
 }
 
 function Mark() {
-  return (
-    <span className="bg-tx flex h-8 w-8 items-center justify-center rounded-[9px]">
-      <svg width="18" height="18" viewBox="0 0 32 32" fill="none" aria-hidden>
-        <path
-          d="M9 11.5v4.2c0 2.2 1.5 3.6 3.6 3.6s3.6-1.4 3.6-3.6v-4.2M16.2 15.7c0 2.2 1.5 3.6 3.6 3.6s3.6-1.4 3.6-3.6v-4.2"
-          stroke="#fff"
-          strokeWidth="2"
-          strokeLinecap="round"
-        />
-        <circle cx="16" cy="23.5" r="1.5" fill="#818cf8" />
-      </svg>
-    </span>
-  )
+  return <Logo size={34} />
 }
 
 /* ── wav encoding ── */

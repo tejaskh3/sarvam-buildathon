@@ -540,7 +540,16 @@ const server = http.createServer(async (req, res) => {
       const audio = await tts(opener, sess.lang);
       json(res, 200, {
         sessionId: id, text: opener, audio, person: sess.personName,
-        photo: photo ? { id: photo.id, url: `/api/photo-file/${photo.file}`, event: photo.event } : null,
+        // full family context rides along so the UI can caption the photo:
+        // whose moment it is, where, when — never a bare unexplained image
+        photo: photo ? {
+          id: photo.id,
+          url: `/api/photo-file/${photo.file}`,
+          event: photo.event || "",
+          place: photo.place || "",
+          year: photo.year || "",
+          people: (() => { try { return JSON.parse(photo.people_json || "[]").map((x) => x.name + (x.relation ? ` (${x.relation})` : "")); } catch { return []; } })(),
+        } : null,
       });
       return;
     }

@@ -1,4 +1,5 @@
 import { Reveal } from '../components/ui'
+import { LogoPlate } from '../components/Logo'
 
 export function Footer() {
   return (
@@ -82,17 +83,7 @@ export function Footer() {
       <footer className="bg-tx border-t border-white/10">
         <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-6 px-5 py-9 sm:flex-row sm:items-center sm:justify-between sm:px-8">
           <div className="flex items-center gap-2.5">
-            <span className="flex h-7 w-7 items-center justify-center rounded-[8px] bg-white/10">
-              <svg width="16" height="16" viewBox="0 0 32 32" fill="none" aria-hidden>
-                <path
-                  d="M9 11.5v4.2c0 2.2 1.5 3.6 3.6 3.6s3.6-1.4 3.6-3.6v-4.2M16.2 15.7c0 2.2 1.5 3.6 3.6 3.6s3.6-1.4 3.6-3.6v-4.2"
-                  stroke="#fff"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                />
-                <circle cx="16" cy="23.5" r="1.5" fill="#818cf8" />
-              </svg>
-            </span>
+            <LogoPlate size={24} tile={30} />
             <span className="font-mono text-[10.5px] tracking-[0.12em] text-white/45 uppercase">
               Yaadein
             </span>
