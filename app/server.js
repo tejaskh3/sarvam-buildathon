@@ -57,7 +57,7 @@ const SYSTEM_PROMPT = `Tum "Yaadein" ho — ek dheeraj-wali, komal aur garam-dil
 6. Achhe shuruaati vishay (jab kuch pata na ho): bachpan ka ghar ya gaon, tyohar, khana-peena, school ke din, dost. Shaadi, bachche, ya parivar ke bare mein khud se mat poochho — agar woh khud batayein toh garmjoshi se saath do.
 7. Agar woh kuch bhool jayein ya atak jayein, aaram se aage badh jao — koi hint-game nahi, koi sudhaar nahi.
 8. Agar woh koi nayi baat batayein, usi mein dilchaspi lo — apna agenda chhod do.
-9. Chhote vaakya. Garam, saral, bolchal wali Hindi (Devanagari mein). Angrezi shabd aa jayein toh theek hai. Jawab 2 vaakya se zyada nahi + ek chhota sawaal.
+9. BAHUT chhota jawab: zyada se zyada 2 chhote vaakya + ek chhota sawaal — kul 30 shabd se kam. Garam, saral, bolchal wali Hindi (Devanagari mein). Angrezi shabd aa jayein toh theek hai. Lambi speech unhe thaka deti hai.
 
 Output sirf bolne wala text — koi asterisk, emoji, ya stage direction nahi.`;
 
@@ -168,7 +168,7 @@ async function chatOnce(history, context) {
     body: JSON.stringify({
       model: CFG.chatModel,
       temperature: 0.4,
-      max_tokens: 300,
+      max_tokens: 160,
       // sarvam-30b is a reasoning model; null disables thinking → fast voice turns
       reasoning_effort: null,
       messages: [
@@ -203,6 +203,32 @@ async function tts(text) {
   return j.audios[0]; // base64 wav
 }
 
+// ─── ack bank: kills dead air (A3) ─────────────────────────────────
+// Pre-rendered acknowledgments, generated once at boot, served to the
+// browser, played the instant a turn is sent — never >300ms of silence.
+const ACK_TEXTS = ["अच्छा...", "हम्म...", "हाँ हाँ...", "अच्छा, समझी...", "हाँ, बताइए..."];
+const ACK_DIR = path.join(db.DATA_DIR, "acks");
+let ACKS = []; // base64 wavs
+
+async function ensureAcks() {
+  fs.mkdirSync(ACK_DIR, { recursive: true });
+  for (let i = 0; i < ACK_TEXTS.length; i++) {
+    const f = path.join(ACK_DIR, `ack-${i}.wav`);
+    if (!fs.existsSync(f)) {
+      try {
+        const b64 = await tts(ACK_TEXTS[i]);
+        fs.writeFileSync(f, Buffer.from(b64, "base64"));
+        console.log(`[acks] rendered "${ACK_TEXTS[i]}"`);
+      } catch (e) {
+        console.warn(`[acks] failed for "${ACK_TEXTS[i]}": ${e.message}`);
+        continue;
+      }
+    }
+    ACKS.push(fs.readFileSync(f).toString("base64"));
+  }
+  console.log(`[acks] ${ACKS.length} ready`);
+}
+
 // ─── http helpers ─────────────────────────────────────────────────
 // CORS: the landing page (vite dev :5173 / deployed static site) calls this API
 const CORS = {
@@ -223,6 +249,92 @@ function readBody(req) {
   });
 }
 
+// ─── family outputs: briefing (D1) + memoir (D3) ──────────────────
+// Both derive ONLY from the governed store: ACTIVE + safe_to_use, with
+// UNRESOLVED facts excluded automatically by memoriesFor().
+
+async function generateBriefing(personId, personName) {
+  const facts = db.memoriesFor(personId);
+  const loop = db.openLoopFor(personId);
+  const avoided = db.inspectMemories(personId).filter((m) => m.safe_to_use === 0 || m.status === "UNRESOLVED");
+  const r = await fetch(`${SARVAM}/v1/chat/completions`, {
+    method: "POST",
+    headers: { ...HDRS, "content-type": "application/json" },
+    body: JSON.stringify({
+      model: CFG.chatModel,
+      temperature: 0.3,
+      max_tokens: 600,
+      reasoning_effort: null,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: `You prepare a 60-second pre-visit briefing for the family of an elder, from their recorded conversation memories. Return ONLY JSON:
+{"ask_about": ["1-2 topics that brought them joy — phrased as a suggestion the visitor can say"],
+ "wants_to_finish": "the unfinished story, if any, else null",
+ "avoid_today": ["topics marked avoid/unresolved — DO NOT reveal details, just name the area gently"],
+ "new_this_week": "one fact the family may not know, phrased as a small revelation, else null"}
+Write values in warm, simple English. Use ONLY the provided facts — invent nothing.`,
+        },
+        {
+          role: "user",
+          content: `Elder: ${personName}\nKnown facts:\n${facts.map((f) => `- ${f.statement} (${f.canonical})`).join("\n")}\nUnfinished story: ${loop ? loop.topic : "none"}\nAvoid/unresolved areas: ${avoided.map((m) => m.category).join(", ") || "none"}`,
+        },
+      ],
+    }),
+  });
+  if (!r.ok) throw new Error(`briefing ${r.status}`);
+  const j = await r.json();
+  const b = JSON.parse(j.choices[0].message.content);
+  // models sometimes echo schema placeholders — scrub anything template-shaped
+  const junk = (v) => !v || /if any|else null|^none$|^null$/i.test(String(v).trim());
+  b.ask_about = (b.ask_about || []).filter((x) => !junk(x));
+  b.avoid_today = (b.avoid_today || []).filter((x) => !junk(x));
+  if (junk(b.wants_to_finish)) b.wants_to_finish = null;
+  if (junk(b.new_this_week)) b.new_this_week = null;
+  return b;
+}
+
+async function generateMemoir(personId, personName) {
+  const facts = db.memoriesFor(personId);
+  if (!facts.length) return { title: "", paragraphs: [] };
+  const r = await fetch(`${SARVAM}/v1/chat/completions`, {
+    method: "POST",
+    headers: { ...HDRS, "content-type": "application/json" },
+    body: JSON.stringify({
+      model: "sarvam-105b", // long-form synthesis — the bigger model earns its keep here
+      temperature: 0.4,
+      max_tokens: 1200,
+      reasoning_effort: null,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: `You write a short memoir chapter from an elder's own recorded statements. HARD RULES:
+- Use ONLY the numbered source facts. NEVER invent sensory details, dialogue, emotions, dates or places not stated.
+- Every paragraph must cite which source facts it uses.
+- Warm, simple Hindi (Devanagari). 3-5 short paragraphs.
+Return ONLY JSON: {"title": "chapter title in Hindi", "paragraphs": [{"text": "...", "sources": [1,2]}]}`,
+        },
+        {
+          role: "user",
+          content: `Elder: ${personName}\nSource facts:\n${facts.map((f, i) => `${i + 1}. ${f.statement} (${f.canonical})`).join("\n")}`,
+        },
+      ],
+    }),
+  });
+  if (!r.ok) throw new Error(`memoir ${r.status}`);
+  const j = await r.json();
+  const out = JSON.parse(j.choices[0].message.content);
+  // attach real memory rows to each cited source for traceability
+  out.paragraphs = (out.paragraphs || []).map((p) => ({
+    ...p,
+    source_memories: (p.sources || []).map((n) => facts[n - 1]).filter(Boolean)
+      .map((m) => ({ id: m.id, statement: m.statement, audio_file: m.audio_file })),
+  }));
+  return out;
+}
+
 // ─── the turn pipeline ─────────────────────────────────────────────
 // Unknown person: extraction runs FIRST (blocking) so a returning elder
 // is recognized in the same reply ("Aapne bataya tha ki aap Pune mein...").
@@ -231,6 +343,8 @@ function readBody(req) {
 async function handleTurn(sess, sessionId, transcript, audioFile) {
   const lastAgent = sess.history.filter((m) => m.role === "assistant").at(-1)?.content;
   sess.history.push({ role: "user", content: transcript });
+  sess.contract.ENGAGED.turns++;
+  sess.contract.ENGAGED.userWords += transcript.split(/\s+/).length;
 
   let extractP = extract(transcript, lastAgent).catch((e) => {
     console.warn("[extract] failed:", e.message);
@@ -247,6 +361,7 @@ async function handleTurn(sess, sessionId, transcript, audioFile) {
       sess.personName = person.name;
       db.linkSession(sessionId, person.id);
       sess.context = personContext(person.id, person.name);
+      if (returning && sess.context) sess.contract.RESUMED = true;
       if (returning && sess.context) {
         // the recognition moment: this exact turn must SHOW the memory (B1)
         sess.recognitionNudge = `ABHI is turn mein: (1) pehli pankti — garam swagat, jaise purane parichit ka: "${person.name} ji, namaste! Achha laga aap phir mile." (2) doosri pankti — unke NAAM ke alawa "jaani hui baaton" mein se EK baat: "Aapne bataya tha ki..." (3) usi baat par ek naram, bhavna-wala sawaal. Agar adhoora vishay diya hai, usse shuru karo.`;
@@ -273,10 +388,17 @@ async function handleTurn(sess, sessionId, transcript, audioFile) {
     if (!sess.personId) return;
     if (ext.facts.length) {
       db.saveMemories(sess.personId, sessionId, ext.facts, audioFile);
+      sess.contract.CAPTURED += ext.facts.length;
+      sess.contract.WRITTEN = true; // briefing/memoir inputs updated
+      sess.contract.ENGAGED.elaborated += ext.facts.filter((f) => f.provenance === "USER_ELABORATED").length;
       console.log(`[memory] +${ext.facts.length} for ${sess.personName}: ${ext.facts.map((f) => f.canonical).join(" | ")}`);
     }
-    if (ext.open_topic) db.setOpenLoop(sess.personId, ext.open_topic);
+    if (ext.open_topic) {
+      db.setOpenLoop(sess.personId, ext.open_topic);
+      sess.contract.CLOSED = true; // prior loop resolved or explicitly re-queued
+    }
   });
+  if (BANNED.test(reply)) sess.contract.SAFE = false; // guard failed — session fails
 
   return { reply, audio, tChat, tTts };
 }
@@ -294,10 +416,11 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && !req.url.startsWith("/api/")) {
       const dist = path.join(__dirname, "..", "landing-page", "dist");
       const clean = req.url.split("?")[0];
-      // memory inspector lives in app/public, outside the SPA
-      if (clean === "/memory.html") {
+      // inspector/family pages live in app/public, outside the SPA
+      const pub = path.join(__dirname, "public", path.basename(clean));
+      if (clean.endsWith(".html") && fs.existsSync(pub)) {
         res.writeHead(200, { "content-type": "text/html" });
-        res.end(fs.readFileSync(path.join(__dirname, "public", "memory.html")));
+        res.end(fs.readFileSync(pub));
         return;
       }
       const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css",
@@ -324,7 +447,18 @@ const server = http.createServer(async (req, res) => {
       let hint = null;
       try { hint = JSON.parse((await readBody(req)).toString() || "{}").person || null; } catch { /* no body */ }
 
-      const sess = { history: [], personId: null, personName: null, context: null, turn: 0 };
+      const sess = {
+        history: [], personId: null, personName: null, context: null, turn: 0,
+        // Session Contract (E2) — every line scored from real events, live
+        contract: {
+          RESUMED: false,   // reopened a prior thread (context loaded at open or on recognition)
+          CAPTURED: 0,      // memories persisted this session
+          CLOSED: false,    // an open loop resolved or explicitly re-queued
+          WRITTEN: false,   // briefing/memoir inputs updated (≥1 capture)
+          SAFE: true,       // no banned phrase survived, no policy breach
+          ENGAGED: { turns: 0, userWords: 0, elaborated: 0 },
+        },
+      };
       let openerInstruction = "(session shuru — namaste kaho, ek vaakya parichay, aur naam poochho)";
 
       if (hint) {
@@ -334,6 +468,7 @@ const server = http.createServer(async (req, res) => {
           sess.personName = person.name;
           db.linkSession(id, person.id);
           sess.context = personContext(person.id, person.name);
+          if (sess.context) sess.contract.RESUMED = true;
           openerInstruction = `(session shuru — ye ${person.name} ji hain, inka garam swagat karo. Phir adhoora silsila NAAM se kholo, ya sujhayi yaadon mein se ek ka zikr karo: "Aapne bataya tha ki...". Naam mat poochho.)`;
         }
       }
@@ -366,7 +501,7 @@ const server = http.createServer(async (req, res) => {
 
       const out = await handleTurn(sess, id, transcript, audioFile);
       console.log(`[turn] stt=${tStt}ms chat=${out.tChat}ms tts=${out.tTts}ms | "${transcript}" → "${out.reply}"`);
-      json(res, 200, { transcript, text: out.reply, audio: out.audio, person: sess.personName });
+      json(res, 200, { transcript, text: out.reply, audio: out.audio, person: sess.personName, contract: sess.contract });
       return;
     }
 
@@ -377,7 +512,22 @@ const server = http.createServer(async (req, res) => {
       if (!sess) return json(res, 400, { error: "unknown session" });
       const { text } = JSON.parse((await readBody(req)).toString());
       const out = await handleTurn(sess, id, text, null);
-      json(res, 200, { transcript: text, text: out.reply, audio: out.audio, person: sess.personName });
+      json(res, 200, { transcript: text, text: out.reply, audio: out.audio, person: sess.personName, contract: sess.contract });
+      return;
+    }
+
+    // live Session Contract (E2)
+    const ctr = req.url.match(/^\/api\/session\/([\w-]+)\/contract$/);
+    if (req.method === "GET" && ctr) {
+      const s = sessions.get(ctr[1]);
+      if (!s) return json(res, 404, { error: "unknown session" });
+      json(res, 200, s.contract);
+      return;
+    }
+
+    // ack clips for the browser to preload (dead-air kill)
+    if (req.method === "GET" && req.url === "/api/acks") {
+      json(res, 200, { acks: ACKS });
       return;
     }
 
@@ -408,6 +558,24 @@ const server = http.createServer(async (req, res) => {
       json(res, 200, { ok: db.resolve(Number(rsv[1]), keep) });
       return;
     }
+    // D1: the Sunday briefing
+    const brf = req.url.match(/^\/api\/people\/(\d+)\/briefing$/);
+    if (req.method === "GET" && brf) {
+      const p = db.people().find((x) => x.id === Number(brf[1]));
+      if (!p) return json(res, 404, { error: "no such person" });
+      json(res, 200, await generateBriefing(p.id, p.name));
+      return;
+    }
+
+    // D3: the memoir chapter, source-cited
+    const mmr = req.url.match(/^\/api\/people\/(\d+)\/memoir$/);
+    if (req.method === "GET" && mmr) {
+      const p = db.people().find((x) => x.id === Number(mmr[1]));
+      if (!p) return json(res, 404, { error: "no such person" });
+      json(res, 200, await generateMemoir(p.id, p.name));
+      return;
+    }
+
     const aud = req.url.match(/^\/api\/audio\/([\w.-]+\.wav)$/);
     if (req.method === "GET" && aud) {
       const f = path.join(db.DATA_DIR, "audio", aud[1]);
@@ -425,4 +593,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`\n🪔 Yaadein listening on http://localhost:${PORT}\n`));
+server.listen(PORT, () => {
+  console.log(`\n🪔 Yaadein listening on http://localhost:${PORT}\n`);
+  ensureAcks().catch((e) => console.warn("[acks] init failed:", e.message));
+});

@@ -330,7 +330,7 @@ export function SessionDemo() {
           </div>
 
           <div className="flex-1 px-5 py-5 sm:px-6">
-            <p className="eyebrow mb-3.5">Did it come back?</p>
+            <p className="eyebrow mb-3.5">What was recalled</p>
             {recalls.length === 0 ? (
               <p className="text-tx-tertiary/60 text-[13px] leading-relaxed">
                 Nothing to check yet. Recall is only ever looked at on the way

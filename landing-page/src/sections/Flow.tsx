@@ -5,7 +5,7 @@ export function Experience() {
   return (
     <Section id="experience">
       <SectionHead
-        eyebrow="what it’s like to use"
+        eyebrow="how you can use it"
         title="There is nothing to learn."
         lede="The person using this may not remember what they were told five minutes ago. So there is one orb, and it does the work — every single time, without being asked."
       />

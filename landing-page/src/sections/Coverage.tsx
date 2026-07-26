@@ -5,7 +5,7 @@ export function Coverage() {
   return (
     <Section id="family" tone="white">
       <SectionHead
-        eyebrow="the part that changes Sunday"
+        eyebrow="how your loved ones can use it"
         title="The conversation doesn’t stop when the orb goes quiet."
         lede="Everything said gets turned into three small, useful things — one for the grandson who dreads the silence, one for the daughter who lives too far away, and one for the coordinator with forty residents and ten hours."
       />

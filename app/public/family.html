@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Yaadein — For the Family</title>
+<style>
+  :root { --ink:#1e2033; --soft:#6b7092; --paper:#f5f5f3; --line:#dedee0; --indigo:#4f46e5; --pink:#d94a8c; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:ui-sans-serif,-apple-system,"Segoe UI",sans-serif; background:var(--paper); color:var(--ink); }
+  .wrap { max-width:44rem; margin:0 auto; padding:2rem 1.25rem 4rem; }
+  h1 { font-family:Georgia,serif; font-size:1.6rem; margin:0; }
+  .sub { color:var(--soft); font-size:0.85rem; margin:0.3rem 0 1.5rem; }
+  .people { display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:1.5rem; }
+  .person { border:1px solid var(--line); background:#fff; border-radius:999px; padding:0.5rem 1.1rem; cursor:pointer; font-size:0.9rem; }
+  .person.active { background:var(--indigo); color:#fff; border-color:var(--indigo); }
+  .card { background:#fff; border:1px solid var(--line); border-radius:12px; padding:1.4rem 1.5rem; margin-bottom:1.2rem; }
+  .card h2 { font-family:Georgia,serif; font-size:1.15rem; margin:0 0 1rem; }
+  .b-row { display:grid; grid-template-columns:8.5rem 1fr; gap:0.75rem; padding:0.6rem 0; border-top:1px solid #f0f0ee; font-size:0.95rem; line-height:1.5; }
+  .b-row b { font-size:0.7rem; letter-spacing:0.08em; text-transform:uppercase; color:var(--soft); font-weight:600; padding-top:0.15rem; }
+  .b-row.newfact { background:#fdf2f8; margin:0.4rem -0.6rem 0; padding:0.6rem; border-radius:8px; border-top:0; }
+  .b-row.newfact b { color:var(--pink); }
+  .memoir p { font-size:1.05rem; line-height:1.8; margin:0 0 1rem; }
+  .memoir h3 { font-family:Georgia,serif; font-size:1.3rem; }
+  .src { display:inline-flex; gap:0.3rem; margin-left:0.4rem; vertical-align:middle; }
+  .src button { border:1px solid var(--line); background:#fff; border-radius:999px; font-size:0.62rem; padding:0.1rem 0.5rem; cursor:pointer; color:var(--soft); }
+  .src button:hover { border-color:var(--indigo); color:var(--indigo); }
+  .loading { color:var(--soft); padding:1.5rem 0; }
+  .gen { border:1px solid var(--line); background:#fff; border-radius:8px; padding:0.5rem 1rem; cursor:pointer; font-size:0.85rem; margin-bottom:1rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Before you visit</h1>
+  <p class="sub">A 60-second briefing and a living memoir — built from their own words, nothing invented.</p>
+  <div class="people" id="people"></div>
+  <div id="out"><p class="loading">Select a person.</p></div>
+</div>
+<script>
+const peopleEl = document.getElementById("people");
+const out = document.getElementById("out");
+let pid = null;
+
+async function load() {
+  const people = await (await fetch("/api/people")).json();
+  peopleEl.innerHTML = "";
+  people.forEach((p, i) => {
+    const b = document.createElement("button");
+    b.className = "person";
+    b.textContent = p.name;
+    b.onclick = () => { document.querySelectorAll(".person").forEach(x=>x.classList.remove("active")); b.classList.add("active"); show(p.id); };
+    peopleEl.appendChild(b);
+    if (i === 0) { b.classList.add("active"); show(p.id); }
+  });
+}
+
+async function show(id) {
+  pid = id;
+  out.innerHTML = '<p class="loading">Preparing the briefing…</p>';
+  try {
+    const b = await (await fetch(`/api/people/${id}/briefing`)).json();
+    let html = `<div class="card"><h2>🪔 This Sunday</h2>`;
+    for (const a of b.ask_about || []) html += `<div class="b-row"><b>Ask about</b><span>${a}</span></div>`;
+    if (b.wants_to_finish) html += `<div class="b-row"><b>They'll want to finish</b><span>${b.wants_to_finish}</span></div>`;
+    for (const a of b.avoid_today || []) html += `<div class="b-row"><b>Gently avoid</b><span>${a}</span></div>`;
+    if (b.new_this_week) html += `<div class="b-row newfact"><b>Nobody knew this</b><span>${b.new_this_week}</span></div>`;
+    html += `</div><button class="gen" onclick="memoir()">📖 Open the living memoir</button><div id="memoir"></div>`;
+    out.innerHTML = html;
+  } catch (e) {
+    out.innerHTML = `<p class="loading">Could not build briefing: ${e.message}</p>`;
+  }
+}
+
+async function memoir() {
+  const el = document.getElementById("memoir");
+  el.innerHTML = '<p class="loading">Writing the chapter from their own words…</p>';
+  try {
+    const m = await (await fetch(`/api/people/${pid}/memoir`)).json();
+    if (!m.paragraphs || !m.paragraphs.length) { el.innerHTML = '<p class="loading">Not enough memories yet.</p>'; return; }
+    let html = `<div class="card memoir"><h3>${m.title || "अध्याय एक"}</h3>`;
+    for (const p of m.paragraphs) {
+      const srcs = (p.source_memories || []).map((s) =>
+        s.audio_file ? `<button onclick="new Audio('/api/audio/${s.audio_file}').play()" title="${s.statement}">▶ source</button>`
+                     : `<button title="${s.statement}">✓ source</button>`).join("");
+      html += `<p>${p.text}<span class="src">${srcs}</span></p>`;
+    }
+    html += `<p style="font-size:0.75rem;color:var(--soft)">Every paragraph cites the recorded statement it came from. Nothing is invented.</p></div>`;
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = `<p class="loading">Could not write memoir: ${e.message}</p>`;
+  }
+}
+load();
+</script>
+</body>
+</html>
