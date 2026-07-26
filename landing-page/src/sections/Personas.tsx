@@ -18,7 +18,7 @@ export function Personas() {
             className="card flex flex-col p-6 transition-shadow duration-300 hover:shadow-[0_18px_44px_-30px_rgba(30,32,51,0.4)]"
           >
             <span
-              className={`font-deva mb-5 flex h-11 w-11 items-center justify-center rounded-full border text-[17px] ${toneRing[p.tone]}`}
+              className={`font-season mb-5 flex h-11 w-11 items-center justify-center rounded-full border text-[17px] ${toneRing[p.tone]}`}
             >
               {p.initials}
             </span>

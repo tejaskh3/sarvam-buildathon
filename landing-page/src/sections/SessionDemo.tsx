@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Orb, type OrbState } from '../components/Orb'
+import { Orb, VoiceLabel, type Voice } from '../components/Orb'
 
 /* ------------------------------------------------------------------
    What a person actually sees and hears. One orb, a voice, and a few
@@ -185,7 +185,7 @@ export function SessionDemo() {
   const current = shown[shown.length - 1]
 
   /* the orb shows whoever holds the floor right now */
-  const orbState: OrbState =
+  const orbState: Voice =
     !live || done || !current
       ? 'idle'
       : current.who === 'agent'
@@ -245,34 +245,40 @@ export function SessionDemo() {
       <div className="grid lg:grid-cols-[1.4fr_1fr]">
         {/* ------------------------------------------- the orb + voice */}
         <div className="border-st-secondary flex flex-col items-center border-b px-5 py-8 sm:px-8 lg:border-r lg:border-b-0">
-          <Orb state={orbState} className="w-[190px] sm:w-[230px]" />
+          <Orb voice={orbState} className="w-[190px] sm:w-[220px]" />
 
-          <span
-            className={`-mt-3 rounded-full px-4 py-1.5 text-[13px] font-medium capitalize transition-colors ${
-              orbState === 'idle'
-                ? 'bg-sf-secondary text-tx-tertiary'
-                : 'bg-tx text-white'
+          {/* the microphone is the only control, and the label under it
+              is the only status */}
+          <div
+            className={`-mt-5 flex h-[54px] w-[54px] items-center justify-center rounded-full border transition-all duration-300 ${
+              orbState === 'listening'
+                ? 'border-sr-purple-600 bg-sr-purple-600 text-white shadow-[0_0_0_8px_rgba(109,92,240,0.13)]'
+                : 'border-st-secondary text-tx-tertiary bg-white'
             }`}
           >
-            {orbState}
-          </span>
+            <MicIcon />
+          </div>
+
+          <div className="mt-4 flex h-5 items-center">
+            <VoiceLabel voice={orbState} />
+          </div>
 
           {/* what is being said, right now */}
-          <div className="mt-6 flex min-h-[168px] w-full max-w-[440px] flex-col justify-start">
+          <div className="mt-5 flex min-h-[168px] w-full max-w-[440px] flex-col justify-start">
             {current ? (
               <div
                 key={`${visit.id}-${step}`}
-                className={`reveal rounded-[18px] px-5 py-4 ${
+                className={`reveal rounded-[18px] border px-5 py-4 ${
                   current.who === 'agent'
-                    ? 'border-st-secondary border bg-white'
-                    : 'bg-sr-warm-50 border-sr-warm-200 border'
+                    ? 'border-sr-pink-200 bg-sr-pink-50'
+                    : 'border-sr-purple-200 bg-sr-purple-50'
                 }`}
               >
                 <p
                   className={`eyebrow mb-2 ${
                     current.who === 'agent'
-                      ? 'text-sr-indigo-600'
-                      : 'text-sr-warm-600'
+                      ? '!text-sr-pink-600'
+                      : '!text-sr-purple-600'
                   }`}
                 >
                   {current.who === 'agent' ? 'Yaadein' : 'Kamala'}
@@ -286,7 +292,7 @@ export function SessionDemo() {
               </div>
             ) : (
               <p className="text-tx-tertiary/60 text-center text-[14px]">
-                Tap the orb and start talking. That’s the whole interface.
+                Tap the microphone and talk. That’s the whole interface.
               </p>
             )}
           </div>
@@ -374,5 +380,19 @@ export function SessionDemo() {
         </div>
       </div>
     </div>
+  )
+}
+
+function MicIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <rect x="9" y="3" width="6" height="11" rx="3" stroke="currentColor" strokeWidth="1.8" />
+      <path
+        d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+    </svg>
   )
 }

@@ -15,8 +15,8 @@ export function Footer() {
         />
         <div className="relative mx-auto w-full max-w-[1180px] px-5 py-24 text-center sm:px-8 sm:py-32">
           <Reveal>
-            <p className="font-deva mb-6 text-[44px] leading-none text-white/90 sm:text-[56px]">
-              यादें
+            <p className="font-season mb-6 text-[40px] leading-none text-white/90 sm:text-[50px]">
+              Yaadein
             </p>
             <h2 className="font-season mx-auto max-w-3xl text-[36px] leading-[1.08] tracking-[-0.015em] text-balance text-white sm:text-[52px]">
               Most of the day, there is nobody to talk to. That is the thing

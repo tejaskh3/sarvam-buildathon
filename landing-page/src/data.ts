@@ -10,8 +10,8 @@ export const personas = [
     age: 78,
     role: 'The person talking',
     blurb:
-      'Lives with early memory loss. Speaks Marathi with Hindi and English mixed in. Hard of hearing. Never touches a screen — this is voice, and only voice.',
-    initials: 'क',
+      'Lives with early memory loss. Speaks the language they grew up with, mixed with English the way people actually talk at home. Hard of hearing. Never touches a screen — this is voice, and only voice.',
+    initials: 'K',
     tone: 'warm',
   },
   {
@@ -20,7 +20,7 @@ export const personas = [
     role: 'Daughter · lives away',
     blurb:
       'In another city, visits once a fortnight. Carries the guilt of distance, and has no real sense of how things are going day to day.',
-    initials: 'मी',
+    initials: 'M',
     tone: 'indigo',
   },
   {
@@ -29,7 +29,7 @@ export const personas = [
     role: 'Grandson · visits',
     blurb:
       'Loves his Aaji. Dreads the visits, because he never knows what to say and the silence is unbearable.',
-    initials: 'अ',
+    initials: 'A',
     tone: 'green',
   },
   {
@@ -38,7 +38,7 @@ export const personas = [
     role: 'Coordinator at the day-care centre',
     blurb:
       'Forty residents. About ten hours a week for one-to-one time. Wants everyone to get a real conversation, not just the six there is time to prepare for.',
-    initials: 'ल',
+    initials: 'L',
     tone: 'rose',
   },
 ] as const
@@ -93,7 +93,7 @@ export const principles = [
   },
   {
     title: 'It speaks their language.',
-    body: 'Hindi, English, Marathi, or all three in one sentence — the way people actually talk at home. No one has to choose.',
+    body: 'Any Indian language, English, or both in the same sentence — the way people actually talk at home. No one picks a language, and no one has to switch.',
   },
 ]
 

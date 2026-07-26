@@ -8,6 +8,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const db = require("./db");
 
 // ─── env ──────────────────────────────────────────────────────────
 const envPath = path.join(__dirname, ".env");
@@ -50,10 +51,9 @@ const SYSTEM_PROMPT = `Tum "Yaadein" ho — ek dheeraj-wali, komal aur garam-dil
 2. TUM baat-cheet ka netritva karti ho. Har turn mein ek thos prastav do — kabhi khula sawaal nahi ("aaj kya baat karein?" MANA hai). Do naam-wale vikalp dena sabse achha hai: "Aaj bachpan ke ghar ki baat karein, ya kisi tyohar ki?"
 3. Sawaal se pehle KATHAN: pehle woh dohrao jo unhone IS baat-cheet mein bataya hai ("Aapne abhi bataya ki...") phir ek chhota, aasan follow-up do.
 4. Ek turn mein sirf EK sawaal. Sawaal sirf bhavna, swad, khushboo, mahaul ya kahani ke bare mein — kabhi tathya ki pareeksha nahi.
-   BAN hain ye shabd (kabhi mat bolo): "yaad hai?", "yaad karo", "yaad aa raha hai?", "batao kaun tha", "kab hua tha", "kahan hua tha".
-   Achha udaharan: "Aapne bataya ki aapka bachpan gaon mein beeta. Wahan subah kaisi lagti thi?"
-   Bura udaharan: "Aapko yaad hai aapka gaon kaunsa tha?"
-5. Sirf woh tathya bolo jo unhone khud is baat-cheet mein kahe hain. Kabhi koi nayi jaankari mat gadho, kabhi anuman ko sach ki tarah mat bolo.
+   BAN hain ye shabd (kabhi mat bolo): "yaad hai?", "yaad karo", "yaad aata hai?", "yaad aa raha hai?", "batao kaun tha", "kab hua tha", "kahan hua tha".
+   (Shaili ka kalpanik udaharan — ismein di gayi jaankari KABHI istemal mat karna: agar kisi ne kaha hota "main gaon mein badi hui", toh achha follow-up hota "Wahan subah kaisi lagti thi?", bura hota "Aapko yaad hai gaon kaunsa tha?")
+5. "Aapne bataya tha ki..." SIRF tab kaho jab woh baat sach mein is baat-cheet mein aayi ho, ya "jaani hui baatein" ki soochi mein ho. Agar aisi koi baat nahi hai, toh ye vaakya bolna sakht MANA hai. Kabhi koi nayi jaankari mat gadho, kabhi anuman ko sach ki tarah mat bolo.
 6. Achhe shuruaati vishay (jab kuch pata na ho): bachpan ka ghar ya gaon, tyohar, khana-peena, school ke din, dost. Shaadi, bachche, ya parivar ke bare mein khud se mat poochho — agar woh khud batayein toh garmjoshi se saath do.
 7. Agar woh kuch bhool jayein ya atak jayein, aaram se aage badh jao — koi hint-game nahi, koi sudhaar nahi.
 8. Agar woh koi nayi baat batayein, usi mein dilchaspi lo — apna agenda chhod do.
@@ -61,8 +61,65 @@ const SYSTEM_PROMPT = `Tum "Yaadein" ho — ek dheeraj-wali, komal aur garam-dil
 
 Output sirf bolne wala text — koi asterisk, emoji, ya stage direction nahi.`;
 
-// ─── in-memory sessions (Phase 2 → Postgres) ──────────────────────
-const sessions = new Map(); // id → { history: [{role, content}] }
+// ─── sessions: history in memory, memories in SQLite ──────────────
+const sessions = new Map(); // id → { history, personId, personName, context, turn }
+
+// Build the per-person context block injected as a second system message.
+// Phase 3: known facts + the open loop + revisit-scheduler picks for today.
+function personContext(personId, personName) {
+  const facts = db.memoriesFor(personId);
+  const loop = db.openLoopFor(personId);
+  if (!facts.length && !loop) return null;
+  let ctx = `Ye ${personName} ji hain — inse pehle bhi baat hui hai.`;
+  if (facts.length) {
+    ctx += `\nJaani hui baatein (inhone khud batayi thin — "Aapne bataya tha ki..." kah kar istemal karo, pareeksha kabhi mat lo):\n`;
+    ctx += facts.slice(0, 12).map((f) => `- ${f.statement}`).join("\n");
+  }
+  if (loop) ctx += `\n\nSABSE ZAROORI — adhoora silsila: "${loop.topic}". Pichhli baar ye kahani aadhi reh gayi thi. Ise NAAM se dobara kholo (jaise: "pichhli baar aap ... ki baat kar rahe the, aur baat aadhi reh gayi thi").`;
+  const due = db.dueMemories(personId, 3);
+  if (due.length) {
+    ctx += `\n\nAaj ke liye sujhayi yaadein (inmein se kisi ek ko naram tarike se chhedo, agar baat-cheet ka rukh mile):\n`;
+    ctx += due.map((m) => `- ${m.statement}`).join("\n");
+  }
+  return ctx;
+}
+
+// ─── memory extraction (structured, parallel to the reply) ────────
+async function extract(userText, agentLastText) {
+  const r = await fetch(`${SARVAM}/v1/chat/completions`, {
+    method: "POST",
+    headers: { ...HDRS, "content-type": "application/json" },
+    body: JSON.stringify({
+      model: CFG.chatModel,
+      temperature: 0.1,
+      max_tokens: 500,
+      reasoning_effort: null,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: `You are a memory-extraction system for conversations with an elder (speech may be Hindi, English or mixed). Extract only durable personal information. Return ONLY valid JSON in exactly this shape:
+{"name": "their first name if they stated it in this utterance, else null",
+ "facts": [{"statement": "the fact as they said it, in their words (Hindi ok)", "canonical": "one-line English meaning", "category": "place|person|food|festival|life_event|preference|other", "emotional_tone": "positive|neutral|negative", "provenance": "USER_STATED|USER_CONFIRMED|USER_ELABORATED|USER_CORRECTED"}],
+ "open_topic": "one line describing a story/topic they seemed to be mid-way through, else null"}
+Provenance rules: the agent proposed it and they merely agreed = USER_CONFIRMED; they added new detail beyond the proposal = USER_ELABORATED; they volunteered it themselves = USER_STATED; they corrected the agent = USER_CORRECTED.
+Only durable facts (places, people, preferences, life events). For bare acknowledgements like "haan"/"theek hai", return an empty facts list.`,
+        },
+        { role: "user", content: `Agent's previous turn: "${agentLastText || "(nothing)"}"\n\nElder said: "${userText}"` },
+      ],
+    }),
+  });
+  if (!r.ok) throw new Error(`extract ${r.status}: ${await r.text()}`);
+  const j = await r.json();
+  const raw = j.choices[0].message.content;
+  try {
+    const parsed = JSON.parse(raw);
+    return { name: parsed.name || null, facts: Array.isArray(parsed.facts) ? parsed.facts : [], open_topic: parsed.open_topic || null };
+  } catch {
+    console.warn(`[extract] unparseable JSON: ${String(raw).slice(0, 200)}`);
+    return { name: null, facts: [], open_topic: null };
+  }
+}
 
 // ─── sarvam calls ─────────────────────────────────────────────────
 async function stt(wavBuffer) {
@@ -78,23 +135,33 @@ async function stt(wavBuffer) {
 
 // C6/C4 guard: recall-testing phrases must never reach her voice.
 // Prompt rules alone leak variants ("yaad aa rahi hai?") — enforce in code.
-const BANNED = /(yaad\s+(hai|karo|aa\s*rah[ia]|aay[ia])|याद\s+(है|करो|आ\s*रह[ीा]|आय[ीा]))/i;
+const BANNED = /(yaad\s+(hai|hain|karo|kar|aa\s*rah[ia]|aay[ia]|aat[ia]|aaye|dila)|याद\s+(है|हैं|करो|कर|आ\s*रह[ीा]|आय[ीा]|आत[ीा]|आए|दिला))/i;
 
-async function chat(history) {
-  let reply = await chatOnce(history);
+async function chat(history, context) {
+  let reply = await chatOnce(history, context);
   if (BANNED.test(reply)) {
     console.warn(`[guard] recall-test phrase blocked: "${reply}"`);
-    reply = await chatOnce([
-      ...history,
-      { role: "assistant", content: reply },
-      { role: "user", content: "(system: us vaakya mein memory-test tha. Wahi baat dobara kaho, lekin bina 'yaad' shabd ke — seedha kathan + ek bhavna-wala sawaal.)" },
-    ]);
-    if (BANNED.test(reply)) reply = reply.replace(BANNED, "").replace(/\?\s*$/, ".");
+    // targeted rewrite: keep the reply, surgically replace the memory-test part
+    const rewritten = await chatOnce(
+      [
+        {
+          role: "user",
+          content: `Ye vaakya ek buzurg se kaha jaana hai, lekin ismein memory-test hai jo unhe sharminda kar sakta hai:\n"${reply}"\nIse dobara likho: wahi garmjoshi, wahi jaankari, lekin "yaad"-wala sawaal hata kar uski jagah bhavna, swad ya mahaul ka sawaal rakho (jaise "aapko kaisa lagta tha?"). Sirf naya vaakya do, aur kuch nahi.`,
+        },
+      ],
+      null
+    );
+    reply = rewritten;
+    if (BANNED.test(reply)) {
+      // last resort: drop the offending sentence whole — never a mangled stump
+      const kept = reply.split(/(?<=[.?!।])\s+/).filter((s) => !BANNED.test(s));
+      reply = kept.length ? kept.join(" ") : "Achha, ye toh badi pyari baat hai. Us waqt aapko kaisa lag raha tha?";
+    }
   }
   return reply;
 }
 
-async function chatOnce(history) {
+async function chatOnce(history, context) {
   const r = await fetch(`${SARVAM}/v1/chat/completions`, {
     method: "POST",
     headers: { ...HDRS, "content-type": "application/json" },
@@ -104,7 +171,11 @@ async function chatOnce(history) {
       max_tokens: 300,
       // sarvam-30b is a reasoning model; null disables thinking → fast voice turns
       reasoning_effort: null,
-      messages: [{ role: "system", content: SYSTEM_PROMPT }, ...history],
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        ...(context ? [{ role: "system", content: context }] : []),
+        ...history,
+      ],
     }),
   });
   if (!r.ok) throw new Error(`Chat ${r.status}: ${await r.text()}`);
@@ -152,6 +223,64 @@ function readBody(req) {
   });
 }
 
+// ─── the turn pipeline ─────────────────────────────────────────────
+// Unknown person: extraction runs FIRST (blocking) so a returning elder
+// is recognized in the same reply ("Aapne bataya tha ki aap Pune mein...").
+// Known person: extraction runs in PARALLEL with the reply — memory
+// capture never adds latency to the conversation.
+async function handleTurn(sess, sessionId, transcript, audioFile) {
+  const lastAgent = sess.history.filter((m) => m.role === "assistant").at(-1)?.content;
+  sess.history.push({ role: "user", content: transcript });
+
+  let extractP = extract(transcript, lastAgent).catch((e) => {
+    console.warn("[extract] failed:", e.message);
+    return { name: null, facts: [], open_topic: null };
+  });
+
+  if (!sess.personId) {
+    const ext = await extractP; // blocking: identity changes THIS reply
+    console.log(`[extract-result] ${JSON.stringify(ext).slice(0, 300)}`);
+    extractP = Promise.resolve(ext);
+    if (ext.name) {
+      const { person, returning } = db.findOrCreatePerson(ext.name);
+      sess.personId = person.id;
+      sess.personName = person.name;
+      db.linkSession(sessionId, person.id);
+      sess.context = personContext(person.id, person.name);
+      if (returning && sess.context) {
+        // the recognition moment: this exact turn must SHOW the memory (B1)
+        sess.recognitionNudge = `ABHI is turn mein: (1) pehli pankti — garam swagat, jaise purane parichit ka: "${person.name} ji, namaste! Achha laga aap phir mile." (2) doosri pankti — unke NAAM ke alawa "jaani hui baaton" mein se EK baat: "Aapne bataya tha ki..." (3) usi baat par ek naram, bhavna-wala sawaal. Agar adhoora vishay diya hai, usse shuru karo.`;
+      }
+      console.log(`[person] ${returning ? "returning" : "new"}: ${person.name} (#${person.id})${sess.context ? " — context loaded" : ""}`);
+    }
+  }
+
+  const t1 = Date.now();
+  const turnContext = sess.context
+    ? sess.context + (sess.recognitionNudge ? `\n\n${sess.recognitionNudge}` : "")
+    : null;
+  sess.recognitionNudge = null; // one turn only
+  const reply = await chat(sess.history, turnContext);
+  const tChat = Date.now() - t1;
+  sess.history.push({ role: "assistant", content: reply });
+
+  const t2 = Date.now();
+  const audio = await tts(reply);
+  const tTts = Date.now() - t2;
+
+  // persist what the extractor found (after reply — never blocks the voice)
+  extractP.then((ext) => {
+    if (!sess.personId) return;
+    if (ext.facts.length) {
+      db.saveMemories(sess.personId, sessionId, ext.facts, audioFile);
+      console.log(`[memory] +${ext.facts.length} for ${sess.personName}: ${ext.facts.map((f) => f.canonical).join(" | ")}`);
+    }
+    if (ext.open_topic) db.setOpenLoop(sess.personId, ext.open_topic);
+  });
+
+  return { reply, audio, tChat, tTts };
+}
+
 // ─── server ───────────────────────────────────────────────────────
 const server = http.createServer(async (req, res) => {
   try {
@@ -165,6 +294,12 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && !req.url.startsWith("/api/")) {
       const dist = path.join(__dirname, "..", "landing-page", "dist");
       const clean = req.url.split("?")[0];
+      // memory inspector lives in app/public, outside the SPA
+      if (clean === "/memory.html") {
+        res.writeHead(200, { "content-type": "text/html" });
+        res.end(fs.readFileSync(path.join(__dirname, "public", "memory.html")));
+        return;
+      }
       const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css",
                      ".svg": "image/svg+xml", ".png": "image/png", ".woff2": "font/woff2",
                      ".ico": "image/x-icon", ".json": "application/json" };
@@ -181,22 +316,37 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // Agent opens the conversation — agent-led from turn zero (A9, B1)
+    // Agent opens the conversation — agent-led from turn zero (A9, B1).
+    // Optional body {person: "Ramesh"} = device remembers who talks here →
+    // the opener itself reopens the unfinished thread by name (RESUMED).
     if (req.method === "POST" && req.url === "/api/session/start") {
       const id = crypto.randomUUID();
-      const history = [];
-      const opener = await chat([
-        ...history,
-        { role: "user", content: "(session shuru — namaste kaho, ek vaakya parichay, aur naam poochho)" },
-      ]);
-      history.push({ role: "assistant", content: opener });
-      sessions.set(id, { history });
+      let hint = null;
+      try { hint = JSON.parse((await readBody(req)).toString() || "{}").person || null; } catch { /* no body */ }
+
+      const sess = { history: [], personId: null, personName: null, context: null, turn: 0 };
+      let openerInstruction = "(session shuru — namaste kaho, ek vaakya parichay, aur naam poochho)";
+
+      if (hint) {
+        const person = db.findPerson(hint); // lookup only — a hint must never create
+        if (person) {
+          sess.personId = person.id;
+          sess.personName = person.name;
+          db.linkSession(id, person.id);
+          sess.context = personContext(person.id, person.name);
+          openerInstruction = `(session shuru — ye ${person.name} ji hain, inka garam swagat karo. Phir adhoora silsila NAAM se kholo, ya sujhayi yaadon mein se ek ka zikr karo: "Aapne bataya tha ki...". Naam mat poochho.)`;
+        }
+      }
+
+      const opener = await chat([{ role: "user", content: openerInstruction }], sess.context);
+      sess.history.push({ role: "assistant", content: opener });
+      sessions.set(id, sess);
       const audio = await tts(opener);
-      json(res, 200, { sessionId: id, text: opener, audio });
+      json(res, 200, { sessionId: id, text: opener, audio, person: sess.personName });
       return;
     }
 
-    // One voice turn: wav in → transcript, reply text, reply audio out
+    // One voice turn: wav in → transcript → memory flow → reply audio out
     if (req.method === "POST" && req.url === "/api/turn") {
       const id = req.headers["x-session-id"];
       const sess = sessions.get(id);
@@ -210,18 +360,43 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { transcript: "", text: "", audio: null, note: "silence" });
       }
 
-      sess.history.push({ role: "user", content: transcript });
-      const t1 = Date.now();
-      const reply = await chat(sess.history);
-      const tChat = Date.now() - t1;
-      sess.history.push({ role: "assistant", content: reply });
+      // keep the turn audio — every memory stays traceable to its recording (B2)
+      const audioFile = `${id.slice(0, 8)}-${sess.turn++}.wav`;
+      fs.writeFileSync(path.join(db.DATA_DIR, "audio", audioFile), wav);
 
-      const t2 = Date.now();
-      const audio = await tts(reply);
-      const tTts = Date.now() - t2;
+      const out = await handleTurn(sess, id, transcript, audioFile);
+      console.log(`[turn] stt=${tStt}ms chat=${out.tChat}ms tts=${out.tTts}ms | "${transcript}" → "${out.reply}"`);
+      json(res, 200, { transcript, text: out.reply, audio: out.audio, person: sess.personName });
+      return;
+    }
 
-      console.log(`[turn] stt=${tStt}ms chat=${tChat}ms tts=${tTts}ms | "${transcript}" → "${reply}"`);
-      json(res, 200, { transcript, text: reply, audio, timings: { stt: tStt, chat: tChat, tts: tTts } });
+    // Text turn — dev tool + demo fallback when a mic misbehaves
+    if (req.method === "POST" && req.url === "/api/turn-text") {
+      const id = req.headers["x-session-id"];
+      const sess = sessions.get(id);
+      if (!sess) return json(res, 400, { error: "unknown session" });
+      const { text } = JSON.parse((await readBody(req)).toString());
+      const out = await handleTurn(sess, id, text, null);
+      json(res, 200, { transcript: text, text: out.reply, audio: out.audio, person: sess.personName });
+      return;
+    }
+
+    // ── memory inspector API ──
+    if (req.method === "GET" && req.url === "/api/people") {
+      json(res, 200, db.people());
+      return;
+    }
+    const mem = req.url.match(/^\/api\/people\/(\d+)\/memories$/);
+    if (req.method === "GET" && mem) {
+      json(res, 200, { memories: db.memoriesFor(Number(mem[1])), open_loop: db.openLoopFor(Number(mem[1])) || null });
+      return;
+    }
+    const aud = req.url.match(/^\/api\/audio\/([\w.-]+\.wav)$/);
+    if (req.method === "GET" && aud) {
+      const f = path.join(db.DATA_DIR, "audio", aud[1]);
+      if (!fs.existsSync(f)) return json(res, 404, { error: "no audio" });
+      res.writeHead(200, { "content-type": "audio/wav", ...CORS });
+      res.end(fs.readFileSync(f));
       return;
     }
 

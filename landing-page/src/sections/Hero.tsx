@@ -3,7 +3,7 @@ import { SessionDemo } from './SessionDemo'
 
 const stats = [
   { value: 'One orb', label: 'the entire interface' },
-  { value: 'Hindi · English · mixed', label: 'however they speak at home' },
+  { value: 'Any Indian language', label: 'however they speak at home' },
   { value: '10 min', label: 'a day, hands-free' },
   { value: 'Every day', label: 'picking up where it stopped' },
 ]
@@ -28,12 +28,9 @@ export function Hero() {
             A voice companion for elders living with memory loss
           </span>
 
-          <h1 className="font-deva text-tx mt-7 text-[62px] leading-none tracking-tight sm:text-[86px]">
-            यादें
-          </h1>
-          <p className="text-tx-tertiary mt-1 font-mono text-[11px] tracking-[0.3em] uppercase">
+          <h1 className="font-season text-tx mt-8 text-[56px] leading-none tracking-[-0.02em] sm:text-[74px]">
             Yaadein
-          </p>
+          </h1>
 
           <h2 className="font-season text-tx mt-7 text-[38px] leading-[1.05] tracking-[-0.015em] text-balance sm:text-[58px]">
             Someone to talk to who{' '}

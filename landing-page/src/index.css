@@ -8,9 +8,7 @@
 @theme {
   --font-matter:
     'Switzer', ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, sans-serif;
-  --font-season:
-    'Instrument Serif', 'Tiro Devanagari Hindi', ui-serif, Georgia, serif;
-  --font-deva: 'Tiro Devanagari Hindi', 'Instrument Serif', ui-serif, serif;
+  --font-season: 'Instrument Serif', ui-serif, Georgia, serif;
   --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
 
   /* text */
@@ -51,6 +49,17 @@
 
   --color-sr-rose-100: #f7e2dd;
   --color-sr-rose-600: #c43d2b;
+
+  /* the two voices: purple = the person, pink = Yaadein */
+  --color-sr-purple-50: #f1f0ff;
+  --color-sr-purple-200: #cdc7fb;
+  --color-sr-purple-600: #6d5cf0;
+  --color-sr-purple-800: #3c318f;
+
+  --color-sr-pink-50: #fdeef5;
+  --color-sr-pink-200: #f8c6dd;
+  --color-sr-pink-600: #d94a8c;
+  --color-sr-pink-800: #8d2b56;
 }
 
 @layer base {

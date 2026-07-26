@@ -10,11 +10,11 @@ const links = [
 export function Ticker() {
   const item = (
     <span className="flex items-center gap-3 px-6 font-mono text-[10px] tracking-[0.16em] whitespace-nowrap text-white/70 uppercase">
-      यादें · Yaadein
+      Yaadein
       <span className="text-sr-indigo-300">·</span>
       A voice companion for elders living with memory loss
       <span className="text-sr-indigo-300">·</span>
-      Speaks Hindi, English & mixed
+      Speaks every Indian language
       <span className="text-sr-indigo-300">·</span>
       Built on Sarvam
       <span className="text-sr-indigo-300">·</span>
@@ -57,11 +57,8 @@ export function Nav() {
           <span className="bg-tx flex h-8 w-8 items-center justify-center rounded-[9px]">
             <Mark />
           </span>
-          <span className="flex items-baseline gap-1.5">
-            <span className="font-deva text-tx text-[19px] leading-none">यादें</span>
-            <span className="text-tx-tertiary text-[13px] font-medium tracking-tight">
-              Yaadein
-            </span>
+          <span className="font-season text-tx text-[20px] leading-none">
+            Yaadein
           </span>
         </a>
 

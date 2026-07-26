@@ -10,6 +10,17 @@ export function Coverage() {
         lede="Everything said gets turned into three small, useful things — one for the grandson who dreads the silence, one for the daughter who lives too far away, and one for the coordinator with forty residents and ten hours."
       />
 
+      <Reveal className="mb-6 flex flex-wrap items-center gap-3">
+        <span className="border-sr-pink-200 bg-sr-pink-50 text-sr-pink-800 inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 font-mono text-[10px] tracking-[0.14em] uppercase">
+          <MailIcon />
+          Weekly report
+        </span>
+        <p className="text-tx-tertiary text-[14px] leading-relaxed">
+          Sent every week to family, care-takers and the day-care centre — a
+          short read, not a dashboard to log into.
+        </p>
+      </Reveal>
+
       <div className="grid gap-4 lg:grid-cols-3">
         {outputs.map((o, i) => (
           <Reveal key={o.who} delay={i * 80} className="card flex flex-col p-6">
@@ -77,5 +88,28 @@ export function Coverage() {
         </p>
       </Reveal>
     </Section>
+  )
+}
+
+function MailIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <rect
+        x="1.5"
+        y="3.5"
+        width="13"
+        height="9"
+        rx="2"
+        stroke="currentColor"
+        strokeWidth="1.4"
+      />
+      <path
+        d="m2.5 5 5.5 3.8L13.5 5"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   )
 }

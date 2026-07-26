@@ -25,7 +25,7 @@ export function Loop() {
               <h3 className="font-season mb-4 text-[27px] leading-none text-white">
                 {l.step}
               </h3>
-              <p className="font-deva mb-4 text-[17px] leading-snug text-white/85">
+              <p className="font-season mb-4 text-[19px] leading-snug text-white/85">
                 {l.line}
               </p>
               <p className="text-[14px] leading-relaxed text-white/50 text-pretty">
