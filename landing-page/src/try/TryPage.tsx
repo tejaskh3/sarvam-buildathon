@@ -10,8 +10,14 @@ import { Orb, VoiceLabel, type Voice } from '../components/Orb'
    point at a hosted agent server; defaults to localhost for dev.
    ------------------------------------------------------------------ */
 
+/* ⚠ DO NOT hardcode localhost as the production fallback.
+   In production the Node server serves this page AND /api/* on the same
+   origin, so API must be '' (relative). localhost is for `vite dev` only —
+   an unconditional localhost fallback breaks the deployed site for
+   everyone except the machine it was built on. */
 const API =
-  (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://localhost:3000'
+  (import.meta.env.VITE_API_BASE as string | undefined) ??
+  (import.meta.env.DEV ? 'http://localhost:3000' : '')
 
 const SILENCE_MS = 1400 // auto-send after this much quiet
 const SILENCE_RMS = 0.012

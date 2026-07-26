@@ -388,7 +388,24 @@ const server = http.createServer(async (req, res) => {
     }
     const mem = req.url.match(/^\/api\/people\/(\d+)\/memories$/);
     if (req.method === "GET" && mem) {
-      json(res, 200, { memories: db.memoriesFor(Number(mem[1])), open_loop: db.openLoopFor(Number(mem[1])) || null });
+      json(res, 200, { memories: db.inspectMemories(Number(mem[1])), open_loop: db.openLoopFor(Number(mem[1])) || null });
+      return;
+    }
+
+    // C3: family topic policy — enforced at retrieval, not in the prompt
+    const pol = req.url.match(/^\/api\/memories\/(\d+)\/policy$/);
+    if (req.method === "POST" && pol) {
+      const { avoid } = JSON.parse((await readBody(req)).toString());
+      db.setPolicy(Number(pol[1]), !!avoid);
+      json(res, 200, { ok: true });
+      return;
+    }
+
+    // B9: family resolves an UNRESOLVED conflict — never resolved with her
+    const rsv = req.url.match(/^\/api\/memories\/(\d+)\/resolve$/);
+    if (req.method === "POST" && rsv) {
+      const { keep } = JSON.parse((await readBody(req)).toString()); // 'original' | variant id
+      json(res, 200, { ok: db.resolve(Number(rsv[1]), keep) });
       return;
     }
     const aud = req.url.match(/^\/api\/audio\/([\w.-]+\.wav)$/);

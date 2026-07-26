@@ -22,6 +22,16 @@
   .USER_CONFIRMED { background:#f5ebda; color:#8a5a12; }
   .USER_ELABORATED { background:#e0f2fe; color:#0c5a80; }
   .USER_CORRECTED { background:#ede9fe; color:#5b21b6; }
+  .FAMILY_VERIFIED { background:#dcfce7; color:#166534; }
+  .st-UNRESOLVED { background:#fef3c7; color:#92400e; }
+  .st-SUPERSEDED { background:#f3f4f6; color:#6b7280; text-decoration:none; }
+  .mem.superseded { opacity:0.55; }
+  .mem.unresolved { border-color:#f59e0b; }
+  .mem.avoided { border-color:#9b3324; background:#fdf7f6; }
+  .variant { border-left:2px solid #f59e0b; margin:0.4rem 0 0 0.5rem; padding:0.3rem 0.8rem; font-size:0.85rem; color:var(--soft); }
+  .actions { display:flex; gap:0.4rem; margin-top:0.5rem; flex-wrap:wrap; }
+  button.act { border:1px solid var(--line); background:#fff; border-radius:6px; padding:0.25rem 0.7rem; font-size:0.72rem; cursor:pointer; }
+  button.act.warn { border-color:#9b3324; color:#9b3324; }
   .tone { font-size:0.7rem; color:var(--soft); }
   .stmt { font-size:1rem; line-height:1.5; }
   .canon { color:var(--soft); font-size:0.8rem; margin-top:0.2rem; }
@@ -66,26 +76,46 @@ function trajectory(m) {
 }
 
 async function show(id) {
+  currentPerson = id;
   const j = await (await fetch(`/api/people/${id}/memories`)).json();
   let html = "";
   if (j.open_loop) html += `<div class="loop">🧵 <b>Open loop:</b> ${j.open_loop.topic} <span class="tone">— will be reopened by name next session</span></div>`;
   if (!j.memories.length) html += '<p class="empty">No memories yet.</p>';
   for (const m of j.memories) {
-    html += `<div class="mem">
+    const cls = m.status === "SUPERSEDED" ? "superseded" : m.status === "UNRESOLVED" ? "unresolved" : m.safe_to_use === 0 ? "avoided" : "";
+    html += `<div class="mem ${cls}">
       <div class="row">
         <span class="chip ${m.provenance}">${m.provenance}</span>
+        ${m.status !== "ACTIVE" ? `<span class="chip st-${m.status}">${m.status}</span>` : ""}
+        ${m.safe_to_use === 0 ? `<span class="chip st-SUPERSEDED" style="background:#f6e6e2;color:#9b3324">AVOID — unreachable by agent</span>` : ""}
         <span class="tone">${m.category} · ${m.emotional_tone} · visited ${m.visit_count || 0}×</span>
       </div>
-      <div class="stmt">${m.statement}</div>
+      <div class="stmt" ${m.status === "SUPERSEDED" ? 'style="text-decoration:line-through"' : ""}>${m.statement}</div>
       ${m.canonical ? `<div class="canon">${m.canonical}</div>` : ""}
+      ${(m.variants || []).map(v => `<div class="variant">↳ she also said: “${v.statement}” <i>(${v.created_at})</i>
+        ${m.status === "UNRESOLVED" ? `<button class="act" onclick="resolveMem(${m.id}, ${v.id})">family: this one is right</button>` : ""}</div>`).join("")}
       <div class="meta">
         <span>${m.created_at}</span>
         ${trajectory(m)}
         ${m.audio_file ? `<button class="play" onclick="new Audio('/api/audio/${m.audio_file}').play()">▶ why did you say that?</button>` : ""}
       </div>
+      <div class="actions">
+        ${m.status === "UNRESOLVED" ? `<button class="act" onclick="resolveMem(${m.id}, 'original')">family: original is right</button>` : ""}
+        ${m.status === "ACTIVE" ? `<button class="act warn" onclick="setPolicy(${m.id}, ${m.safe_to_use === 0 ? "false" : "true"})">${m.safe_to_use === 0 ? "allow again" : "avoid this topic"}</button>` : ""}
+      </div>
     </div>`;
   }
   detailEl.innerHTML = html;
+}
+
+let currentPerson = null;
+async function setPolicy(id, avoid) {
+  await fetch(`/api/memories/${id}/policy`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ avoid }) });
+  if (currentPerson) show(currentPerson);
+}
+async function resolveMem(id, keep) {
+  await fetch(`/api/memories/${id}/resolve`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ keep }) });
+  if (currentPerson) show(currentPerson);
 }
 load();
 </script>
