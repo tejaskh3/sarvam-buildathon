@@ -45,6 +45,40 @@ export function Footer() {
         </div>
       </section>
 
+      {/* evidence base — reminiscence & cognitive stimulation research */}
+      <section className="bg-tx border-t border-white/10">
+        <div className="mx-auto w-full max-w-[1180px] px-5 py-10 sm:px-8">
+          <p className="font-mono text-[10px] tracking-[0.16em] text-white/40 uppercase">
+            The research behind Yaadein
+          </p>
+          <ol className="mt-4 max-w-3xl list-decimal space-y-2.5 pl-5 text-[12.5px] leading-relaxed text-white/45">
+            <li>
+              Woods B, Rai HK, Elliott E, Aguirre E, Orrell M, Spector A (2023).{' '}
+              <span className="text-white/60">
+                Cognitive stimulation to improve cognitive functioning in people with dementia.
+              </span>{' '}
+              Cochrane Database of Systematic Reviews, Issue 1, CD005562.
+            </li>
+            <li>
+              Woods B, O&apos;Philbin L, Farrell EM, Spector AE, Orrell M (2018).{' '}
+              <span className="text-white/60">Reminiscence therapy for dementia.</span>{' '}
+              Cochrane Database of Systematic Reviews, 3, CD001120. PMID 29493789.
+            </li>
+            <li>
+              <span className="text-white/60">
+                Comparative efficacy of cognitive training modalities in cognitive impairment: a
+                systematic review and network meta-analysis
+              </span>{' '}
+              (2025).
+            </li>
+          </ol>
+          <p className="mt-4 max-w-3xl text-[11px] leading-relaxed text-white/30">
+            Yaadein supports engagement and connection. It is not a medical device and does not
+            diagnose, treat, or cure dementia.
+          </p>
+        </div>
+      </section>
+
       <footer className="bg-tx border-t border-white/10">
         <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-6 px-5 py-9 sm:flex-row sm:items-center sm:justify-between sm:px-8">
           <div className="flex items-center gap-2.5">

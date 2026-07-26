@@ -32,12 +32,16 @@ export function TryPage() {
   const [contract, setContract] = useState<Record<string, unknown> | null>(null)
   /* access = an allowlisted 10-digit number; remembered on this device */
   const [phone, setPhone] = useState<string | null>(getStoredPhone)
+  const [gateOpen, setGateOpen] = useState(true) // closable; mic tap reopens
   const phoneRef = useRef(phone)
   phoneRef.current = phone
+  const gateRef = useRef<typeof setGateOpen>(setGateOpen)
+  gateRef.current = setGateOpen
   const endRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    // scroll the transcript box only — never yank the whole page
+    endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   }, [lines])
 
   const voiceRef = useRef<Voice>('idle')
@@ -210,7 +214,8 @@ export function TryPage() {
      Tapping while Yaadein speaks = barge-in: she stops mid-word,
      the floor is yours, context is kept (A6). */
   const toggle = useCallback(async () => {
-    if (busyRef.current || !phoneRef.current) return
+    if (busyRef.current) return
+    if (!phoneRef.current) return void gateRef.current(true) // need the number first
     if (voiceRef.current === 'speaking') {
       const p = playingRef.current
       if (p) {
@@ -270,12 +275,13 @@ export function TryPage() {
     return () => window.removeEventListener('keydown', onKey)
   }, [toggle])
 
-  const last = lines.slice(-4)
   const listening = voice === 'listening'
 
   return (
     <div className="bg-sf flex min-h-screen flex-col">
-      {!phone && <PhoneGate api={API} onDone={setPhone} />}
+      {!phone && gateOpen && (
+        <PhoneGate api={API} onDone={setPhone} onClose={() => setGateOpen(false)} />
+      )}
       <header className="mx-auto flex w-full max-w-[1180px] items-center justify-between px-5 py-4 sm:px-8">
         <a
           href="#top"
@@ -359,10 +365,11 @@ export function TryPage() {
           </div>
         )}
 
-        <div className="mt-6 w-full space-y-2">
-          {last.map((l, i) => (
+        {/* full transcript, scrollable — the whole conversation stays reachable */}
+        <div className="mt-6 max-h-[320px] w-full space-y-2 overflow-y-auto pr-1">
+          {lines.map((l, i) => (
             <div
-              key={lines.length - last.length + i}
+              key={i}
               className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed ${
                 l.who === 'agent'
                   ? 'border-sr-pink-200 bg-sr-pink-50 text-tx border'

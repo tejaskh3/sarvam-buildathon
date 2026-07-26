@@ -1,0 +1,11 @@
+# Never ship local data with a deploy — it would overwrite the live
+# site's database, audio, and photos with this laptop's copy.
+app/data/
+
+# local-only
+node_modules/
+landing-page/node_modules/
+.env
+app/.env
+docs/
+scripts/

@@ -20,7 +20,7 @@ export function clearStoredPhone() {
   localStorage.removeItem(KEY)
 }
 
-export function PhoneGate({ api, onDone }: { api: string; onDone: (phone: string) => void }) {
+export function PhoneGate({ api, onDone, onClose }: { api: string; onDone: (phone: string) => void; onClose?: () => void }) {
   const [value, setValue] = useState('')
   const [err, setErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -51,7 +51,16 @@ export function PhoneGate({ api, onDone }: { api: string; onDone: (phone: string
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 px-5 backdrop-blur-sm">
-      <div className="w-full max-w-[400px] rounded-2xl bg-white px-6 py-7 shadow-2xl">
+      <div className="relative w-full max-w-[400px] rounded-2xl bg-white px-6 py-7 shadow-2xl">
+        {onClose && (
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="text-tx-tertiary hover:text-tx absolute top-3.5 right-4 flex h-8 w-8 items-center justify-center rounded-full text-[20px] leading-none transition-colors"
+          >
+            ×
+          </button>
+        )}
         <h2 className="font-season text-tx text-[22px]">Your Yaadein number</h2>
         <p className="text-tx-secondary mt-1.5 text-[14px] leading-relaxed">
           Conversations and memories belong to a phone number, so families stay private without a login.

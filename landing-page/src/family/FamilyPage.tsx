@@ -3,9 +3,8 @@ import { PhoneGate, clearStoredPhone, getStoredPhone } from '../components/Phone
 
 /* ------------------------------------------------------------------
    Family Dashboard — the caregiver's side of Yaadein.
-   Briefing before a visit · alerts & trends (which questions took time
-   to answer) · the living memoir (with English translation and
-   narration) · every memory with provenance and its original audio ·
+   Briefing before a visit · the living memoir (with English translation
+   and narration) · every memory with provenance and its original audio ·
    photo uploads that become tomorrow's conversation.
    The elder never sees this page; their only surface is the orb.
    ------------------------------------------------------------------ */
@@ -35,6 +34,7 @@ type Photo = {
   id: number; url: string; event: string; place: string; year: string
   status: string; people: { name: string; relation?: string; deceased: boolean }[]
 }
+
 type Signals = {
   alerts: { question: string; answer: string; delay_ms: number; created_at: string; severity: 'high' | 'medium' }[]
   fading: { id: number; statement: string; canonical: string; visit_count: number }[]
@@ -56,6 +56,7 @@ export function FamilyPage() {
   const [tab, setTab] = useState<'briefing' | 'signals' | 'memoir' | 'memories' | 'photos'>('briefing')
   /* the family sees only the people on THEIR number — no auth, just the allowlist */
   const [phone, setPhone] = useState<string | null>(getStoredPhone)
+  const [gateOpen, setGateOpen] = useState(true)
 
   useEffect(() => {
     if (!phone) return
@@ -77,7 +78,9 @@ export function FamilyPage() {
 
   return (
     <div className="bg-sf min-h-screen">
-      {!phone && <PhoneGate api={API} onDone={setPhone} />}
+      {!phone && gateOpen && (
+        <PhoneGate api={API} onDone={setPhone} onClose={() => setGateOpen(false)} />
+      )}
       <header className="mx-auto flex w-full max-w-[1180px] items-center justify-between px-5 py-4 sm:px-8">
         <a href="#top" onClick={() => (window.location.hash = '')} className="flex items-baseline gap-1.5">
           <span className="font-deva text-tx text-[19px] leading-none">यादें</span>
@@ -111,15 +114,23 @@ export function FamilyPage() {
               <span className="ml-1.5 opacity-60">{p.memory_count}</span>
             </button>
           ))}
-          {!people.length && (
+          {!people.length && phone && (
             <p className="text-tx-tertiary text-[14px]">No one yet — have a first conversation on the Try page.</p>
           )}
+          {!phone && (
+            <button onClick={() => setGateOpen(true)} className="pill pill-primary !py-2 !text-[13px]">
+              Enter your Yaadein number
+            </button>
+          )}
         </div>
+
+        {/* at a glance: numbers, moods, topics — before any tab is opened */}
+        {pid !== null && <OverviewPanel pid={pid} />}
 
         {/* tabs */}
         {pid !== null && (
           <>
-            <div className="border-st-secondary mt-7 flex flex-wrap gap-x-5 gap-y-1 border-b">
+            <div className="border-st-secondary mt-8 flex flex-wrap gap-x-5 gap-y-1 border-b">
               {(
                 [
                   ['briefing', 'Visit briefing'],
@@ -152,6 +163,144 @@ export function FamilyPage() {
         )}
       </main>
     </div>
+  )
+}
+
+/* ── at a glance: the family's read on how things are going ───── */
+
+const CAT_LABEL: Record<string, string> = {
+  place: 'Places', person: 'People', food: 'Food', festival: 'Festivals',
+  life_event: 'Life events', preference: 'Likes & dislikes', other: 'Other',
+}
+
+function OverviewPanel({ pid }: { pid: number }) {
+  const [mems, setMems] = useState<Memory[] | null>(null)
+  const [loop, setLoop] = useState<string | null>(null)
+  const [sig, setSig] = useState<Signals | null>(null)
+
+  useEffect(() => {
+    setMems(null)
+    setSig(null)
+    fetch(`${API}/api/people/${pid}/memories`)
+      .then((r) => r.json())
+      .then((j) => { setMems(j.memories ?? []); setLoop(j.open_loop?.topic ?? null) })
+      .catch(() => setMems([]))
+    fetch(`${API}/api/people/${pid}/signals`)
+      .then((r) => r.json())
+      .then(setSig)
+      .catch(() => setSig(null))
+  }, [pid])
+
+  if (!mems) return <Loading text="Gathering the week…" />
+  if (!mems.length) return null
+
+  const active = mems.filter((m) => m.status === 'ACTIVE')
+  const unresolved = mems.filter((m) => m.status === 'UNRESOLVED').length
+  const tone = { positive: 0, neutral: 0, negative: 0 }
+  const cats: Record<string, number> = {}
+  const joyCats: Record<string, number> = {}
+  for (const m of active) {
+    tone[(m.emotional_tone as keyof typeof tone) in tone ? (m.emotional_tone as keyof typeof tone) : 'neutral']++
+    cats[m.category] = (cats[m.category] ?? 0) + 1
+    if (m.emotional_tone === 'positive') joyCats[m.category] = (joyCats[m.category] ?? 0) + 1
+  }
+  const topCats = Object.entries(cats).sort((a, b) => b[1] - a[1]).slice(0, 4)
+  const maxCat = topCats[0]?.[1] ?? 1
+  const joyCat = Object.entries(joyCats).sort((a, b) => b[1] - a[1])[0]?.[0]
+  const toneTotal = Math.max(1, tone.positive + tone.neutral + tone.negative)
+
+  const series = sig?.series ?? []
+  const last = series.at(-1)
+  const prev = series.at(-2)
+  const pauseTrend = last && prev && last.avg_delay_ms != null && prev.avg_delay_ms != null
+    ? last.avg_delay_ms - prev.avg_delay_ms
+    : null
+  const needsYou = unresolved + (sig?.fading.length ?? 0)
+
+  /* plain-language reads the family can act on */
+  const insights: { icon: string; text: string }[] = []
+  if (joyCat && CAT_LABEL[joyCat])
+    insights.push({ icon: '✨', text: `${CAT_LABEL[joyCat]} bring the most joy — a good place to start a visit.` })
+  if (loop)
+    insights.push({ icon: '🧵', text: `There's an unfinished story: “${loop}”. Ask them to finish it.` })
+  if (pauseTrend != null)
+    insights.push(pauseTrend <= -300
+      ? { icon: '💚', text: 'Answers came quicker last session than the one before.' }
+      : pauseTrend >= 300
+        ? { icon: '🕰', text: 'Answers took a little longer last session — worth a gentler pace.' }
+        : { icon: '🙂', text: 'Response pace has been steady across recent sessions.' })
+  if (unresolved > 0)
+    insights.push({ icon: '⚖️', text: `${unresolved} ${unresolved === 1 ? 'memory has' : 'memories have'} two versions — settle ${unresolved === 1 ? 'it' : 'them'} in Every memory.` })
+  if ((sig?.fading.length ?? 0) > 0)
+    insights.push({ icon: '🍂', text: `${sig!.fading.length} ${sig!.fading.length === 1 ? 'memory' : 'memories'} may be getting harder — details in Alerts & trends.` })
+
+  const Tile = ({ big, label, sub, warn = false }: { big: React.ReactNode; label: string; sub?: string; warn?: boolean }) => (
+    <div className={`rounded-2xl border px-4 py-3.5 ${warn ? 'border-amber-300 bg-amber-50/60' : 'border-st-secondary bg-white'}`}>
+      <p className={`text-[24px] leading-tight font-semibold tracking-tight ${warn ? 'text-amber-700' : 'text-tx'}`}>{big}</p>
+      <p className="text-tx-tertiary mt-0.5 font-mono text-[9px] tracking-[0.14em] uppercase">{label}</p>
+      {sub && <p className="text-tx-secondary mt-1 text-[11px] leading-snug">{sub}</p>}
+    </div>
+  )
+
+  return (
+    <section className="mt-6">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Tile big={active.length} label="Living memories" sub={`${mems.length - active.length} archived versions kept`} />
+        <Tile big={series.length || '—'} label="Voice sessions" sub={last ? `last: ${last.at.slice(5, 10)}` : 'none yet'} />
+        <Tile
+          big={last?.avg_delay_ms != null ? `${(last.avg_delay_ms / 1000).toFixed(1)}s` : '—'}
+          label="Avg pause, last session"
+          sub={pauseTrend == null ? 'how long answers take to start' : pauseTrend <= -300 ? '↓ quicker than before' : pauseTrend >= 300 ? '↑ slower than before' : '→ steady'}
+        />
+        <Tile big={needsYou} label="Needs your eye" sub={needsYou ? 'conflicts + fading memories' : 'nothing pending'} warn={needsYou > 0} />
+      </div>
+
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        {/* what they love talking about */}
+        <div className="border-st-secondary rounded-2xl border bg-white px-5 py-4">
+          <p className="text-tx-tertiary font-mono text-[9px] tracking-[0.14em] uppercase">What they talk about</p>
+          <div className="mt-3 space-y-2">
+            {topCats.map(([cat, n]) => (
+              <div key={cat} className="flex items-center gap-2.5">
+                <span className="text-tx w-[104px] shrink-0 text-[12px]">{CAT_LABEL[cat] ?? cat}</span>
+                <div className="bg-sf-secondary h-2 flex-1 overflow-hidden rounded-full">
+                  <div className="bg-sr-purple-600/70 h-full rounded-full" style={{ width: `${(n / maxCat) * 100}%` }} />
+                </div>
+                <span className="text-tx-tertiary w-5 text-right text-[11px]">{n}</span>
+              </div>
+            ))}
+          </div>
+          {/* how those memories feel */}
+          <p className="text-tx-tertiary mt-4 font-mono text-[9px] tracking-[0.14em] uppercase">How those memories feel</p>
+          <div className="mt-2 flex h-2.5 overflow-hidden rounded-full">
+            <div className="bg-sr-green-600/70" style={{ width: `${(tone.positive / toneTotal) * 100}%` }} />
+            <div className="bg-sf-secondary" style={{ width: `${(tone.neutral / toneTotal) * 100}%` }} />
+            <div className="bg-red-400/70" style={{ width: `${(tone.negative / toneTotal) * 100}%` }} />
+          </div>
+          <div className="text-tx-tertiary mt-1.5 flex gap-3 text-[11px]">
+            <span><span className="text-sr-green-600">●</span> happy {tone.positive}</span>
+            <span><span className="opacity-40">●</span> neutral {tone.neutral}</span>
+            <span><span className="text-red-400">●</span> tender {tone.negative}</span>
+          </div>
+        </div>
+
+        {/* this week, in plain words */}
+        <div className="border-st-secondary rounded-2xl border bg-white px-5 py-4">
+          <p className="text-tx-tertiary font-mono text-[9px] tracking-[0.14em] uppercase">Worth knowing</p>
+          <ul className="mt-3 space-y-2.5">
+            {insights.slice(0, 5).map((ins, i) => (
+              <li key={i} className="text-tx flex gap-2 text-[13px] leading-snug">
+                <span aria-hidden>{ins.icon}</span>
+                <span>{ins.text}</span>
+              </li>
+            ))}
+            {!insights.length && (
+              <li className="text-tx-tertiary text-[13px]">A few more conversations and patterns will show up here.</li>
+            )}
+          </ul>
+        </div>
+      </div>
+    </section>
   )
 }
 
@@ -208,7 +357,6 @@ function SignalsTab({ pid }: { pid: number }) {
   if (!s) return <Loading text="Reading the conversation signals…" />
 
   const fmtS = (ms: number) => `${(ms / 1000).toFixed(1)}s`
-  const noData = !s.alerts.length && !s.fading.length && s.series.length === 0
 
   return (
     <div className="space-y-6">
@@ -276,12 +424,6 @@ function SignalsTab({ pid }: { pid: number }) {
           <p className="text-tx-tertiary mt-4 text-[14px]">The graph appears after the first voice session.</p>
         )}
       </div>
-
-      {noData && (
-        <p className="text-tx-tertiary text-[13px]">
-          Signals build up as they talk to Yaadein — check back after a session or two.
-        </p>
-      )}
     </div>
   )
 }
@@ -301,7 +443,6 @@ function TrendChart({ series, slowMs }: { series: Signals['series']; slowMs: num
   return (
     <div className="mt-4 overflow-x-auto">
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full min-w-[420px]" role="img" aria-label="Session trend chart">
-        {/* y grid + labels (seconds) */}
         {[0, 0.5, 1].map((f) => {
           const ms = maxDelay * f
           return (
@@ -313,12 +454,10 @@ function TrendChart({ series, slowMs }: { series: Signals['series']; slowMs: num
             </g>
           )
         })}
-        {/* the "hard question" threshold */}
         <line x1={PAD.l} x2={W - PAD.r} y1={yDelay(slowMs)} y2={yDelay(slowMs)} stroke="#f59e0b" strokeWidth="1" strokeDasharray="4 4" />
         <text x={W - PAD.r} y={yDelay(slowMs) - 4} textAnchor="end" fontSize="9" fill="#b45309">
           hard-question line ({(slowMs / 1000).toFixed(0)}s)
         </text>
-        {/* bars: memories captured */}
         {series.map((p, i) => (
           <rect
             key={p.session_id}
@@ -331,7 +470,6 @@ function TrendChart({ series, slowMs }: { series: Signals['series']; slowMs: num
             opacity="0.18"
           />
         ))}
-        {/* line: avg pause before answering */}
         <path d={line} fill="none" stroke="#6d5cf0" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
         {series.map((p, i) => (
           <circle
@@ -344,7 +482,6 @@ function TrendChart({ series, slowMs }: { series: Signals['series']; slowMs: num
             <title>{`${p.at} — avg pause ${((p.avg_delay_ms || 0) / 1000).toFixed(1)}s · ${p.slow_turns} slow answers · ${p.captured} memories`}</title>
           </circle>
         ))}
-        {/* x labels: session number + date */}
         {series.map((p, i) => (
           <text key={p.session_id} x={x(i)} y={H - 12} textAnchor="middle" fontSize="9" fill="#8b87a3">
             {series.length > 8 && i % 2 ? '' : p.at.slice(5, 10)}
