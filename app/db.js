@@ -53,6 +53,7 @@ for (const ddl of [
   "ALTER TABLE memories ADD COLUMN prov_history TEXT", // e.g. 'USER_STATED,USER_ELABORATED,USER_CONFIRMED'
   "ALTER TABLE memories ADD COLUMN safe_to_use INTEGER DEFAULT 1", // 0 = family marked AVOID (C3)
   "ALTER TABLE people ADD COLUMN lang TEXT", // last detected language → next session opens in it
+  "ALTER TABLE people ADD COLUMN phone TEXT", // allowlisted 10-digit number this person belongs to
 ]) {
   try { db.exec(ddl); } catch { /* column exists */ }
 }
@@ -77,6 +78,22 @@ CREATE TABLE IF NOT EXISTS photos (
 `);
 fs.mkdirSync(path.join(DATA_DIR, "photos"), { recursive: true });
 
+// Recall-difficulty tracking (mentor feedback, 26 Jul): every voice turn
+// stores the question asked and how long the elder took to START answering
+// (measured in the browser: end of agent audio → first voiced frame).
+// Long pauses = the question was hard — surfaced as alerts + a trend graph.
+db.exec(`
+CREATE TABLE IF NOT EXISTS turns (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  person_id INTEGER NOT NULL,
+  session_id TEXT,
+  question TEXT,
+  answer TEXT,
+  delay_ms INTEGER,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+`);
+
 // B8: conflicting versions of the same fact — kept, never merged, never
 // resolved with the elder. The parent memory goes UNRESOLVED and out of
 // the agent's reachable context until the family settles it.
@@ -94,7 +111,7 @@ CREATE TABLE IF NOT EXISTS variants (
 // node:sqlite finalizes module-scope statements between uses — prepare per call.
 const q = new Proxy({
   findPerson: "SELECT * FROM people WHERE name_key = ?",
-  createPerson: "INSERT INTO people (name, name_key) VALUES (?, ?)",
+  createPerson: "INSERT INTO people (name, name_key, phone) VALUES (?, ?, ?)",
   linkSession: "INSERT OR REPLACE INTO sessions (id, person_id) VALUES (?, ?)",
   addMemory: `INSERT INTO memories (person_id, session_id, statement, canonical, category, emotional_tone, provenance, audio_file)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -103,28 +120,31 @@ const q = new Proxy({
   memoriesFor: "SELECT * FROM memories WHERE person_id = ? AND status = 'ACTIVE' AND safe_to_use = 1 ORDER BY created_at DESC LIMIT 40",
   allMemoriesFor: "SELECT * FROM memories WHERE person_id = ? ORDER BY created_at DESC LIMIT 100",
   people: "SELECT p.*, (SELECT COUNT(*) FROM memories m WHERE m.person_id = p.id) AS memory_count FROM people p ORDER BY p.created_at DESC",
+  peopleFor: "SELECT p.*, (SELECT COUNT(*) FROM memories m WHERE m.person_id = p.id) AS memory_count FROM people p WHERE p.phone = ? ORDER BY p.created_at DESC",
   addLoop: "INSERT INTO open_loops (person_id, topic) VALUES (?, ?)",
   closeLoops: "UPDATE open_loops SET status='CLOSED' WHERE person_id = ? AND status='OPEN'",
   openLoopFor: "SELECT * FROM open_loops WHERE person_id = ? AND status='OPEN' ORDER BY created_at DESC LIMIT 1",
 }, { get: (sqls, name) => db.prepare(sqls[name]) });
 
-function keyOf(name) {
-  return name.trim().toLowerCase().replace(/\s+/g, " ");
+// Identity = (phone, name): the same first name on two different numbers is
+// two different people. No auth — the allowlisted number IS the household.
+function keyOf(name, phone) {
+  return (phone || "") + "|" + name.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 module.exports = {
   DATA_DIR,
 
-  findPerson(name) {
-    return q.findPerson.get(keyOf(name)) || null;
+  findPerson(name, phone) {
+    return q.findPerson.get(keyOf(name, phone)) || null;
   },
 
-  findOrCreatePerson(name) {
-    const key = keyOf(name);
+  findOrCreatePerson(name, phone) {
+    const key = keyOf(name, phone);
     let p = q.findPerson.get(key);
     let returning = true;
     if (!p) {
-      q.createPerson.run(name.trim(), key);
+      q.createPerson.run(name.trim(), key, phone || null);
       p = q.findPerson.get(key);
       returning = false;
     }
@@ -262,8 +282,8 @@ module.exports = {
     return q.openLoopFor.get(personId);
   },
 
-  people() {
-    return q.people.all();
+  people(phone) {
+    return phone ? q.peopleFor.all(phone) : q.people.all();
   },
 
   setPersonLang(personId, lang) {
@@ -295,9 +315,44 @@ module.exports = {
     db.prepare("UPDATE photos SET status = 'SHOWN' WHERE id = ?").run(photoId);
   },
 
+  addTurn(personId, sessionId, question, answer, delayMs) {
+    db.prepare("INSERT INTO turns (person_id, session_id, question, answer, delay_ms) VALUES (?, ?, ?, ?, ?)")
+      .run(personId, sessionId, question || null, answer || null, delayMs == null ? null : Math.round(delayMs));
+  },
+
+  // Alerts + planning graph for the family:
+  //  - alerts: questions that took long to answer (≥4s pause = hard, ≥7s = very hard)
+  //  - fading: memories whose recall trajectory slid to bare confirmation
+  //  - series: per-session averages the dashboard draws as a trend line
+  signals(personId) {
+    const SLOW = 4000, VERY_SLOW = 7000;
+    const alerts = db.prepare(
+      `SELECT question, answer, delay_ms, created_at FROM turns
+       WHERE person_id = ? AND delay_ms >= ? ORDER BY created_at DESC LIMIT 8`
+    ).all(personId, SLOW).map((t) => ({ ...t, severity: t.delay_ms >= VERY_SLOW ? "high" : "medium" }));
+    const fading = db.prepare(
+      "SELECT id, statement, canonical, prov_history, visit_count FROM memories WHERE person_id = ? AND status = 'ACTIVE'"
+    ).all(personId).filter((m) => {
+      const h = (m.prov_history || "").split(",").filter(Boolean);
+      // told richly before, now only confirms when it comes up = getting harder
+      return h.length >= 2 && h.at(-1) === "USER_CONFIRMED" && h.some((g) => g === "USER_STATED" || g === "USER_ELABORATED");
+    });
+    const series = db.prepare(
+      `SELECT session_id, MIN(created_at) AS at, COUNT(*) AS turns,
+              ROUND(AVG(delay_ms)) AS avg_delay_ms, MAX(delay_ms) AS max_delay_ms,
+              SUM(delay_ms >= ${SLOW}) AS slow_turns
+       FROM turns WHERE person_id = ? AND delay_ms IS NOT NULL
+       GROUP BY session_id ORDER BY at ASC LIMIT 30`
+    ).all(personId).map((s) => ({
+      ...s,
+      captured: db.prepare("SELECT COUNT(*) c FROM memories WHERE person_id = ? AND session_id = ?").get(personId, s.session_id).c,
+    }));
+    return { alerts, fading, series, thresholds: { slow_ms: SLOW, very_slow_ms: VERY_SLOW } };
+  },
+
   // coordinator digest: who needs a human, at a glance
-  digest() {
-    return q.people.all().map((p) => ({
+  digest(phone) {
+    return (phone ? q.peopleFor.all(phone) : q.people.all()).map((p) => ({
       id: p.id,
       name: p.name,
       lang: p.lang,

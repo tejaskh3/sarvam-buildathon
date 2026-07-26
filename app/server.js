@@ -64,8 +64,18 @@ const SYSTEM_PROMPT = `Tum "Yaadein" ho — ek dheeraj-wali, komal aur garam-dil
 
 Output sirf bolne wala text — koi asterisk, emoji, ya stage direction nahi.`;
 
+// ─── access: allowlisted 10-digit numbers, no auth ─────────────────
+// The number IS the household: memories are scoped to it. TEST_PHONE is
+// public (shown in the app popup); the others stay private to the team.
+const TEST_PHONE = "1234567890";
+const ALLOWED_PHONES = new Set(
+  (process.env.ALLOWED_PHONES || `${TEST_PHONE},1231231239,1231231238`)
+    .split(",").map((s) => s.trim()).filter(Boolean)
+);
+const phoneOk = (p) => typeof p === "string" && /^\d{10}$/.test(p) && ALLOWED_PHONES.has(p);
+
 // ─── sessions: history in memory, memories in SQLite ──────────────
-const sessions = new Map(); // id → { history, personId, personName, context, turn }
+const sessions = new Map(); // id → { history, personId, personName, context, turn, phone }
 
 // Build the per-person context block injected as a second system message.
 // Phase 3: known facts + the open loop + revisit-scheduler picks for today.
@@ -360,7 +370,7 @@ Return ONLY JSON: {"title": "chapter title in Hindi", "paragraphs": [{"text": ".
 // is recognized in the same reply ("Aapne bataya tha ki aap Pune mein...").
 // Known person: extraction runs in PARALLEL with the reply — memory
 // capture never adds latency to the conversation.
-async function handleTurn(sess, sessionId, transcript, audioFile) {
+async function handleTurn(sess, sessionId, transcript, audioFile, delayMs) {
   const lastAgent = sess.history.filter((m) => m.role === "assistant").at(-1)?.content;
   sess.history.push({ role: "user", content: transcript });
   sess.contract.ENGAGED.turns++;
@@ -376,7 +386,7 @@ async function handleTurn(sess, sessionId, transcript, audioFile) {
     console.log(`[extract-result] ${JSON.stringify(ext).slice(0, 300)}`);
     extractP = Promise.resolve(ext);
     if (ext.name) {
-      const { person, returning } = db.findOrCreatePerson(ext.name);
+      const { person, returning } = db.findOrCreatePerson(ext.name, sess.phone);
       sess.personId = person.id;
       sess.personName = person.name;
       db.linkSession(sessionId, person.id);
@@ -420,6 +430,13 @@ async function handleTurn(sess, sessionId, transcript, audioFile) {
     }
   });
   if (BANNED.test(reply)) sess.contract.SAFE = false; // guard failed — session fails
+
+  // recall-difficulty: log what was asked and how long they took to start
+  // answering — the family's alerts and trend graph read from this
+  if (sess.personId && lastAgent) {
+    db.addTurn(sess.personId, sessionId, lastAgent, transcript, delayMs);
+    if (delayMs != null && delayMs >= 4000) console.log(`[hesitation] ${Math.round(delayMs / 100) / 10}s before answering: "${lastAgent.slice(0, 80)}"`);
+  }
 
   return { reply, audio, tChat, tTts };
 }
@@ -465,11 +482,18 @@ const server = http.createServer(async (req, res) => {
     // the opener itself reopens the unfinished thread by name (RESUMED).
     if (req.method === "POST" && req.url === "/api/session/start") {
       const id = crypto.randomUUID();
-      let hint = null;
-      try { hint = JSON.parse((await readBody(req)).toString() || "{}").person || null; } catch { /* no body */ }
+      let hint = null, phone = null;
+      try {
+        const body = JSON.parse((await readBody(req)).toString() || "{}");
+        hint = body.person || null;
+        phone = String(body.phone || "").trim();
+      } catch { /* no body */ }
+      if (!phoneOk(phone)) {
+        return json(res, 403, { error: "phone_not_allowed" });
+      }
 
       const sess = {
-        history: [], personId: null, personName: null, context: null, turn: 0,
+        history: [], personId: null, personName: null, context: null, turn: 0, phone,
         // Session Contract (E2) — every line scored from real events, live
         contract: {
           RESUMED: false,   // reopened a prior thread (context loaded at open or on recognition)
@@ -484,7 +508,7 @@ const server = http.createServer(async (req, res) => {
 
       let photo = null;
       if (hint) {
-        const person = db.findPerson(hint); // lookup only — a hint must never create
+        const person = db.findPerson(hint, phone); // lookup only — a hint must never create
         if (person) {
           sess.personId = person.id;
           sess.personName = person.name;
@@ -546,7 +570,8 @@ const server = http.createServer(async (req, res) => {
       const audioFile = `${id.slice(0, 8)}-${sess.turn++}.wav`;
       fs.writeFileSync(path.join(db.DATA_DIR, "audio", audioFile), wav);
 
-      const out = await handleTurn(sess, id, transcript, audioFile);
+      const delayMs = parseInt(req.headers["x-delay-ms"], 10);
+      const out = await handleTurn(sess, id, transcript, audioFile, Number.isFinite(delayMs) ? delayMs : null);
       console.log(`[turn] stt=${tStt}ms chat=${out.tChat}ms tts=${out.tTts}ms | "${transcript}" → "${out.reply}"`);
       json(res, 200, { transcript, text: out.reply, audio: out.audio, person: sess.personName, contract: sess.contract });
       return;
@@ -558,7 +583,8 @@ const server = http.createServer(async (req, res) => {
       const sess = sessions.get(id);
       if (!sess) return json(res, 400, { error: "unknown session" });
       const { text } = JSON.parse((await readBody(req)).toString());
-      const out = await handleTurn(sess, id, text, null);
+      const delayMs = parseInt(req.headers["x-delay-ms"], 10);
+      const out = await handleTurn(sess, id, text, null, Number.isFinite(delayMs) ? delayMs : null);
       json(res, 200, { transcript: text, text: out.reply, audio: out.audio, person: sess.personName, contract: sess.contract });
       return;
     }
@@ -578,14 +604,30 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // ── memory inspector API ──
-    if (req.method === "GET" && req.url === "/api/people") {
-      json(res, 200, db.people());
+    // instant popup feedback: is this number on the list?
+    const vp = req.url.match(/^\/api\/verify-phone\?n=(\d+)$/);
+    if (req.method === "GET" && vp) {
+      json(res, 200, { ok: phoneOk(vp[1]) });
+      return;
+    }
+
+    // ── memory inspector API (scoped to the caller's number) ──
+    const ppl = req.url.match(/^\/api\/people(?:\?phone=(\d+))?$/);
+    if (req.method === "GET" && ppl) {
+      if (!phoneOk(ppl[1])) return json(res, 403, { error: "phone_not_allowed" });
+      json(res, 200, db.people(ppl[1]));
       return;
     }
     const mem = req.url.match(/^\/api\/people\/(\d+)\/memories$/);
     if (req.method === "GET" && mem) {
       json(res, 200, { memories: db.inspectMemories(Number(mem[1])), open_loop: db.openLoopFor(Number(mem[1])) || null });
+      return;
+    }
+
+    // recall-difficulty alerts + planning trend (mentor feedback)
+    const sig = req.url.match(/^\/api\/people\/(\d+)\/signals$/);
+    if (req.method === "GET" && sig) {
+      json(res, 200, db.signals(Number(sig[1])));
       return;
     }
 
@@ -605,7 +647,7 @@ const server = http.createServer(async (req, res) => {
       json(res, 200, { ok: db.resolve(Number(rsv[1]), keep) });
       return;
     }
-    // D1: the Sunday briefing
+    // D1: the visit briefing
     const brf = req.url.match(/^\/api\/people\/(\d+)\/briefing$/);
     if (req.method === "GET" && brf) {
       const p = db.people().find((x) => x.id === Number(brf[1]));
@@ -669,8 +711,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     // coordinator digest: who needs a human, at a glance
-    if (req.method === "GET" && req.url === "/api/digest") {
-      json(res, 200, db.digest());
+    const dig = req.url.match(/^\/api\/digest(?:\?phone=(\d+))?$/);
+    if (req.method === "GET" && dig) {
+      if (!phoneOk(dig[1])) return json(res, 403, { error: "phone_not_allowed" });
+      json(res, 200, db.digest(dig[1]));
       return;
     }
 

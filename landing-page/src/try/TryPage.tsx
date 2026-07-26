@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Orb, VoiceLabel, type Voice } from '../components/Orb'
+import { PhoneGate, clearStoredPhone, getStoredPhone } from '../components/PhoneGate'
 
 /* ------------------------------------------------------------------
    Try Yaadein — a live voice session.
@@ -29,6 +30,10 @@ export function TryPage() {
   const [lines, setLines] = useState<{ who: 'agent' | 'you'; text: string; photo?: string }[]>([])
   const [error, setError] = useState<string | null>(null)
   const [contract, setContract] = useState<Record<string, unknown> | null>(null)
+  /* access = an allowlisted 10-digit number; remembered on this device */
+  const [phone, setPhone] = useState<string | null>(getStoredPhone)
+  const phoneRef = useRef(phone)
+  phoneRef.current = phone
   const endRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -39,7 +44,10 @@ export function TryPage() {
   const busyRef = useRef(false)
   const levelRef = useRef(0)
   const sessionRef = useRef<string | null>(null)
-  const recRef = useRef<{ chunks: Float32Array[]; lastVoice: number; startedAt: number; hasVoice?: boolean } | null>(null)
+  const recRef = useRef<{ chunks: Float32Array[]; lastVoice: number; startedAt: number; hasVoice?: boolean; delayMs?: number } | null>(null)
+  /* recall-difficulty signal: when Yaadein's question finished playing —
+     the gap until their first word is how hard the question was */
+  const agentDoneAtRef = useRef<number | null>(null)
   const audioCtxRef = useRef<AudioContext | null>(null)
   /* dead-air kill: preloaded "achha…" clips, played the moment a turn is sent */
   const acksRef = useRef<AudioBuffer[]>([])
@@ -99,6 +107,7 @@ export function TryPage() {
     clearInterval(meter)
     levelRef.current = 0
     playingRef.current = null
+    agentDoneAtRef.current = Date.now()
     /* barge-in: if she interrupted, the caller already owns the state */
     if (!handle.interrupted) setState('idle')
   }, [decode])
@@ -118,7 +127,10 @@ export function TryPage() {
     try {
       const r = await fetch(`${API}/api/turn`, {
         method: 'POST',
-        headers: { 'x-session-id': sessionRef.current! },
+        headers: {
+          'x-session-id': sessionRef.current!,
+          ...(rec.delayMs != null ? { 'x-delay-ms': String(rec.delayMs) } : {}),
+        },
         body: wav,
       })
       const j = await r.json()
@@ -127,7 +139,7 @@ export function TryPage() {
         setState('idle')
         return
       }
-      if (j.person) localStorage.setItem('yaadein-person', j.person)
+      if (j.person) localStorage.setItem(`yaadein-person-${phoneRef.current}`, j.person)
       if (j.contract) setContract(j.contract)
       setLines((l) => [
         ...l,
@@ -166,6 +178,8 @@ export function TryPage() {
       const rms = Math.sqrt(sum / data.length)
       levelRef.current = Math.min(rms * 12, 1)
       if (rms > SILENCE_RMS) {
+        if (!rec.hasVoice && agentDoneAtRef.current)
+          rec.delayMs = Math.max(0, Date.now() - agentDoneAtRef.current)
         rec.lastVoice = Date.now()
         rec.hasVoice = true
       } else if (rec.hasVoice && Date.now() - rec.lastVoice > SILENCE_MS) {
@@ -197,13 +211,14 @@ export function TryPage() {
      Tapping while Yaadein speaks = barge-in: she stops mid-word,
      the floor is yours, context is kept (A6). */
   const toggle = useCallback(async () => {
-    if (busyRef.current) return
+    if (busyRef.current || !phoneRef.current) return
     if (voiceRef.current === 'speaking') {
       const p = playingRef.current
       if (p) {
         p.interrupted = true
         try { p.src.stop() } catch { /* already ended */ }
       }
+      agentDoneAtRef.current = Date.now() // barge-in = they answered instantly
       recRef.current = { chunks: [], lastVoice: Date.now(), startedAt: Date.now() }
       setState('listening')
       return
@@ -215,16 +230,23 @@ export function TryPage() {
       if (!sessionRef.current) {
         setState('idle', true)
         // this device remembers who talks here → opener resumes their thread by name
-        const lastPerson = localStorage.getItem('yaadein-person')
+        const lastPerson = localStorage.getItem(`yaadein-person-${phoneRef.current}`)
         const r = await fetch(`${API}/api/session/start`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(lastPerson ? { person: lastPerson } : {}),
+          body: JSON.stringify({ phone: phoneRef.current, ...(lastPerson ? { person: lastPerson } : {}) }),
         })
+        if (r.status === 403) {
+          // number fell off the allowlist — ask again
+          clearStoredPhone()
+          setPhone(null)
+          setState('idle')
+          return
+        }
         const j = await r.json()
         if (j.error) throw new Error(j.error)
         sessionRef.current = j.sessionId
-        if (j.person) localStorage.setItem('yaadein-person', j.person)
+        if (j.person) localStorage.setItem(`yaadein-person-${phoneRef.current}`, j.person)
         setLines((l) => [...l, { who: 'agent', text: j.text, photo: j.photo?.url }])
         await play(j.audio)
       }
@@ -256,6 +278,7 @@ export function TryPage() {
 
   return (
     <div className="bg-sf flex min-h-screen flex-col">
+      {!phone && <PhoneGate api={API} onDone={setPhone} />}
       <header className="mx-auto flex w-full max-w-[1180px] items-center justify-between px-5 py-4 sm:px-8">
         <a
           href="#top"

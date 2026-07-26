@@ -88,9 +88,9 @@ const visits: Visit[] = [
       },
       {
         who: 'person',
-        text: 'Mere pati ke saath. Har Sunday.',
-        gloss: 'With my husband. Every Sunday.',
-        remembers: { label: 'Sundays', value: 'Sarasbaug, with their husband' },
+        text: 'Mere pati ke saath. Har shaam.',
+        gloss: 'With my husband. Every evening.',
+        remembers: { label: 'Evenings', value: 'Sarasbaug, with their husband' },
         hold: 3000,
       },
     ],
@@ -104,13 +104,13 @@ const visits: Visit[] = [
     turns: [
       {
         who: 'agent',
-        text: 'Kamala ji, aap Sunday ko kahan jaate the?',
-        gloss: 'Kamala ji, where did you use to go on Sundays?',
+        text: 'Kamala ji, aap shaam ko kahan jaate the?',
+        gloss: 'Kamala ji, where did you use to go in the evenings?',
       },
       {
         who: 'person',
-        text: 'Sunday ko… hmm. Yaad nahi aa raha.',
-        gloss: 'On Sundays… hmm. It isn’t coming to me.',
+        text: 'Shaam ko… hmm. Yaad nahi aa raha.',
+        gloss: 'In the evenings… hmm. It isn’t coming to me.',
         recall: {
           visit: 'Tuesday',
           ok: false,
@@ -119,8 +119,8 @@ const visits: Visit[] = [
       },
       {
         who: 'agent',
-        text: 'Sarasbaug. Aapne bataya tha — har Sunday, apne pati ke saath.',
-        gloss: 'Sarasbaug. You told me — every Sunday, with your husband.',
+        text: 'Sarasbaug. Aapne bataya tha — har shaam, apne pati ke saath.',
+        gloss: 'Sarasbaug. You told me — every evening, with your husband.',
       },
       {
         who: 'person',

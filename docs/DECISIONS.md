@@ -44,3 +44,13 @@
 ## D10 — English number words added to variance detection; non-numeric contradictions still open
 **Decision:** contradiction detection covers digits + Hindi + English number words. "Pune vs Nagpur"-type (no numbers) contradictions still coexist rather than flag.
 **Why:** the clean fix is an LLM contradiction check on dup-suspects (~30 min, one more Sarvam call per suspect). Deferred to hardening — flagged to testers as known limitation.
+
+## D11 — Access by allowlisted phone number; identity = (number, name)
+**Decision (Tejas, 26 Jul):** no auth. A 10-digit number on the server allowlist opens the chat and the Family Dashboard. Public test number **1234567890** (shown in the popup); private team numbers 1231231239 and 1231231238. Allowlist is overridable via `ALLOWED_PHONES` env var on Railway.
+**My additions:** the number also **scopes memory** — a person is (number, name), so testers on different numbers can never see or pollute each other's people; `/api/people` and `/api/digest` require a listed number; unlisted/missing numbers get 403 (3 new attack-suite tests). The number is remembered per device in localStorage.
+**Known limits:** anyone with the test number shares that household (expected); per-person memory/photo endpoints are still id-addressable — real ACLs come with real auth, post-hackathon.
+
+## D12 — Recall difficulty = time-to-first-word, measured in the browser
+**Decision (mentor feedback, 26 Jul):** every voice turn logs the question asked and the pause between Yaadein's audio ending and the elder's first voiced frame. **≥4s = hard question (amber alert), ≥7s = very hard (red)** — thresholds are a first guess, tune after real-elder testing. Barge-in counts as an instant answer (0ms).
+**Why client-side:** the browser is the only place that knows when playback actually finished and when speech actually started; server timestamps would include network + TTS decode noise.
+**Family surface:** new "Alerts & trends" dashboard tab — slow-question alert cards, "memories getting harder" list (prov_history trajectory sliding to bare confirmation), and an SVG trend graph (avg pause line vs. memories-captured bars, with the 4s hard-question line drawn in) for planning support.

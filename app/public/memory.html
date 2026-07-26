@@ -54,7 +54,13 @@ const peopleEl = document.getElementById("people");
 const detailEl = document.getElementById("detail");
 
 async function load() {
-  const people = await (await fetch("/api/people")).json();
+  // access = allowlisted number; reuse what the main app stored, else ask once
+  let phone = localStorage.getItem("yaadein-phone");
+  if (!/^\d{10}$/.test(phone || "")) {
+    phone = (window.prompt("Your 10-digit Yaadein number (test: 1234567890)") || "").trim();
+    if (/^\d{10}$/.test(phone)) localStorage.setItem("yaadein-phone", phone);
+  }
+  const people = await (await fetch(`/api/people?phone=${phone}`)).json();
   peopleEl.innerHTML = "";
   if (!people.length) { detailEl.innerHTML = '<p class="empty">No people yet — have a conversation first.</p>'; return; }
   people.forEach((p, i) => {

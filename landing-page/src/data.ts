@@ -102,9 +102,9 @@ export const principles = [
 export const outputs = [
   {
     who: 'Arjun',
-    what: 'What to talk about on Sunday',
+    what: 'What to talk about when you visit',
     lines: [
-      'Ask about: Sunday walks in Sarasbaug',
+      'Ask about: evening walks in Sarasbaug',
       'Wants to finish: the story about the blue scooter',
       'Maybe not today: Ajoba’s illness — it was upsetting on Tuesday',
       'New this week: Aaji used to make mango pickle every summer',
@@ -115,7 +115,7 @@ export const outputs = [
     who: 'Meena',
     what: 'Something you didn’t know',
     lines: [
-      '“I used to go to Sarasbaug every Sunday with your father.”',
+      '“I used to go to Sarasbaug every evening with your father.”',
       'First time this has come up · Thursday',
       'Play the recording in their own voice',
     ],

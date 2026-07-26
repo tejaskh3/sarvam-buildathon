@@ -4,6 +4,7 @@
 // Uses /api/turn-text (no audio needed). Re-run after any prompt/db change.
 
 const API = process.env.API || "http://localhost:3000";
+const PHONE = process.env.PHONE || "1234567890"; // shared test number on the allowlist
 const BANNED = /(yaad\s+(hai|hain|karo|kar|aa\s*rah[ia]|aay[ia]|aat[ia]|aaye|dila)|याद\s+(है|हैं|करो|कर|आ\s*रह[ीा]|आय[ीा]|आत[ीा]|आए|दिला))/i;
 
 let pass = 0, fail = 0;
@@ -15,7 +16,7 @@ const ok = (name, cond, detail = "") => {
 async function start(person) {
   const r = await fetch(`${API}/api/session/start`, {
     method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify(person ? { person } : {}),
+    body: JSON.stringify({ phone: PHONE, ...(person ? { person } : {}) }),
   });
   return r.json();
 }
@@ -30,7 +31,7 @@ async function memories(pid) {
   return (await fetch(`${API}/api/people/${pid}/memories`)).json();
 }
 async function people() {
-  return (await fetch(`${API}/api/people`)).json();
+  return (await fetch(`${API}/api/people?phone=${PHONE}`)).json();
 }
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const findPid = async (name) => (await people()).find((p) => p.name.toLowerCase() === name.toLowerCase())?.id;
@@ -99,6 +100,20 @@ const resumed = s2.person === A && /aapne bataya|pichhli baar/i.test(s2.text);
 ok("cold session resumes by name with real memory", resumed, `opener: "${s2.text.slice(0, 90)}…"`);
 const openerLeaksUnresolved = /(do|teen|2|3)\s*bachch/i.test(s2.text);
 ok("opener does not use UNRESOLVED facts", !openerLeaksUnresolved);
+
+// ── 7. phone gate: numbers off the allowlist never get a session ─
+const rGate = await fetch(`${API}/api/session/start`, {
+  method: "POST", headers: { "content-type": "application/json" },
+  body: JSON.stringify({ phone: "9999999999" }),
+});
+ok("unlisted number is rejected (403)", rGate.status === 403);
+const rNoPhone = await fetch(`${API}/api/session/start`, {
+  method: "POST", headers: { "content-type": "application/json" },
+  body: JSON.stringify({}),
+});
+ok("missing number is rejected (403)", rNoPhone.status === 403);
+const rPeople = await fetch(`${API}/api/people?phone=9999999999`);
+ok("unlisted number cannot list people", rPeople.status === 403);
 
 console.log(`\n${fail === 0 ? "🎉" : "🔧"} ${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

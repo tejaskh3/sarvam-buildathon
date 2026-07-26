@@ -42,7 +42,13 @@ const out = document.getElementById("out");
 let pid = null;
 
 async function load() {
-  const people = await (await fetch("/api/people")).json();
+  // access = allowlisted number; reuse what the main app stored, else ask once
+  let phone = localStorage.getItem("yaadein-phone");
+  if (!/^\d{10}$/.test(phone || "")) {
+    phone = (window.prompt("Your 10-digit Yaadein number (test: 1234567890)") || "").trim();
+    if (/^\d{10}$/.test(phone)) localStorage.setItem("yaadein-phone", phone);
+  }
+  const people = await (await fetch(`/api/people?phone=${phone}`)).json();
   peopleEl.innerHTML = "";
   people.forEach((p, i) => {
     const b = document.createElement("button");
@@ -59,7 +65,7 @@ async function show(id) {
   out.innerHTML = '<p class="loading">Preparing the briefing…</p>';
   try {
     const b = await (await fetch(`/api/people/${id}/briefing`)).json();
-    let html = `<div class="card"><h2>🪔 This Sunday</h2>`;
+    let html = `<div class="card"><h2>🪔 Before you visit</h2>`;
     for (const a of b.ask_about || []) html += `<div class="b-row"><b>Ask about</b><span>${a}</span></div>`;
     if (b.wants_to_finish) html += `<div class="b-row"><b>They'll want to finish</b><span>${b.wants_to_finish}</span></div>`;
     for (const a of b.avoid_today || []) html += `<div class="b-row"><b>Gently avoid</b><span>${a}</span></div>`;
