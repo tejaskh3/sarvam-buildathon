@@ -8,7 +8,12 @@ import { useEffect, useRef, useState } from 'react'
    point at a hosted agent server; defaults to localhost for dev.
    ------------------------------------------------------------------ */
 
-const API = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://localhost:3000'
+// Same-origin by default: the Node server serves both this page and /api/*.
+// '' → relative URLs. localhost:3000 only during `vite dev` (separate ports).
+// VITE_API_BASE overrides both if the API is ever hosted elsewhere.
+const API =
+  (import.meta.env.VITE_API_BASE as string | undefined) ??
+  (import.meta.env.DEV ? 'http://localhost:3000' : '')
 
 type OrbState = 'idle' | 'listening' | 'thinking' | 'speaking'
 

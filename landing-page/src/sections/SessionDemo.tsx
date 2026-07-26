@@ -90,7 +90,7 @@ const visits: Visit[] = [
         who: 'person',
         text: 'Mere pati ke saath. Har Sunday.',
         gloss: 'With my husband. Every Sunday.',
-        remembers: { label: 'Sundays', value: 'Sarasbaug, with her husband' },
+        remembers: { label: 'Sundays', value: 'Sarasbaug, with their husband' },
         hold: 3000,
       },
     ],
@@ -137,6 +137,8 @@ export function SessionDemo() {
   const [vi, setVi] = useState(0)
   const [step, setStep] = useState(0)
   const [live, setLive] = useState(false)
+  /* stops rolling on to the next visit once someone picks one themselves */
+  const [auto, setAuto] = useState(true)
   const rootRef = useRef<HTMLDivElement>(null)
   const started = useRef(false)
 
@@ -165,6 +167,7 @@ export function SessionDemo() {
   useEffect(() => {
     if (!live) return
     if (done) {
+      if (!auto) return
       const t = window.setTimeout(() => {
         setVi((v) => (v + 1) % visits.length)
         setStep(0)
@@ -176,21 +179,18 @@ export function SessionDemo() {
       visit.turns[step]?.hold ?? 3000,
     )
     return () => window.clearTimeout(t)
-  }, [live, step, done, visit])
+  }, [live, step, done, visit, auto])
 
   const shown = visit.turns.slice(0, step)
   const current = shown[shown.length - 1]
-  const speaking = !done && visit.turns[step]?.who === 'agent'
 
-  const orbState: OrbState = !live
-    ? 'idle'
-    : done
+  /* the orb shows whoever holds the floor right now */
+  const orbState: OrbState =
+    !live || done || !current
       ? 'idle'
-      : current?.who === 'person' && speaking
-        ? 'thinking'
-        : speaking
-          ? 'speaking'
-          : 'listening'
+      : current.who === 'agent'
+        ? 'speaking'
+        : 'listening'
 
   /* everything learned up to and including the current visit */
   const learned = visits
@@ -212,6 +212,7 @@ export function SessionDemo() {
     setVi(i)
     setStep(0)
     setLive(true)
+    setAuto(false)
     started.current = true
   }
 

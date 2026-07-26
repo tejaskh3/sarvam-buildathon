@@ -37,7 +37,7 @@ export const personas = [
     age: 34,
     role: 'Coordinator at the day-care centre',
     blurb:
-      'Forty residents. About ten hours a week for one-to-one time. Wants everyone to get a real conversation, not just the six she can prepare for.',
+      'Forty residents. About ten hours a week for one-to-one time. Wants everyone to get a real conversation, not just the six there is time to prepare for.',
     initials: 'ल',
     tone: 'rose',
   },
@@ -106,8 +106,8 @@ export const outputs = [
     lines: [
       'Ask about: Sunday walks in Sarasbaug',
       'Wants to finish: the story about the blue scooter',
-      'Maybe not today: Ajoba’s illness — it upset her on Tuesday',
-      'New this week: she used to make mango pickle every summer',
+      'Maybe not today: Ajoba’s illness — it was upsetting on Tuesday',
+      'New this week: Aaji used to make mango pickle every summer',
     ],
     foot: 'Reads in under a minute, in the car on the way over. Nobody has to sit in silence again.',
   },
@@ -116,8 +116,8 @@ export const outputs = [
     what: 'Something you didn’t know',
     lines: [
       '“I used to go to Sarasbaug every Sunday with your father.”',
-      'First time she’s mentioned it · Thursday',
-      'Play the recording in her own voice',
+      'First time this has come up · Thursday',
+      'Play the recording in their own voice',
     ],
     foot: 'Not a monitoring dashboard. A reason to call, and something new to ask about.',
   },
@@ -129,6 +129,6 @@ export const outputs = [
       '2 worth a look: one seemed low, one got upset',
       '1 question for a family to settle',
     ],
-    foot: 'The good days need nothing from her. Only the two that matter come up.',
+    foot: 'The good days need nothing at all. Only the two that matter come up.',
   },
 ]

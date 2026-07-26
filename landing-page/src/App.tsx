@@ -2,12 +2,9 @@ import { useEffect, useState } from 'react'
 import { Nav, Ticker } from './sections/Nav'
 import { Hero } from './sections/Hero'
 import { Personas } from './sections/Personas'
-import { Contract } from './sections/Contract'
-import { Flow } from './sections/Flow'
-import { Integrity } from './sections/Integrity'
-import { Stories } from './sections/Stories'
+import { Loop } from './sections/Contract'
+import { Experience } from './sections/Flow'
 import { Coverage } from './sections/Coverage'
-import { Done } from './sections/Done'
 import { Footer } from './sections/Footer'
 import { TryPage } from './try/TryPage'
 
@@ -28,12 +25,9 @@ export default function App() {
       <main>
         <Hero />
         <Personas />
-        <Contract />
-        <Flow />
-        <Integrity />
-        <Stories />
+        <Loop />
+        <Experience />
         <Coverage />
-        <Done />
       </main>
       <Footer />
     </>

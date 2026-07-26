@@ -5,7 +5,6 @@ import {
   type ElementType,
   type ReactNode,
 } from 'react'
-import type { ContractKey, Priority } from '../data'
 
 /* Fades a block in the first time it enters the viewport. */
 export function Reveal({
@@ -127,47 +126,6 @@ export function SectionHead({
         </p>
       )}
     </Reveal>
-  )
-}
-
-const contractTone: Record<ContractKey, string> = {
-  RESUMED: 'bg-sr-indigo-50 text-sr-indigo-700 border-sr-indigo-200',
-  CAPTURED: 'bg-sr-indigo-50 text-sr-indigo-700 border-sr-indigo-200',
-  CLOSED: 'bg-sr-warm-50 text-sr-warm-900 border-sr-warm-200',
-  WRITTEN: 'bg-sr-warm-50 text-sr-warm-900 border-sr-warm-200',
-  SAFE: 'bg-sr-green-50 text-sr-green-800 border-sr-green-200',
-  ENGAGED: 'bg-sr-green-50 text-sr-green-800 border-sr-green-200',
-}
-
-export function ContractBadge({
-  label,
-  className = '',
-}: {
-  label: ContractKey
-  className?: string
-}) {
-  return (
-    <span
-      className={`inline-flex items-center rounded-full border px-2.5 py-1 font-mono text-[9px] tracking-[0.14em] ${contractTone[label]} ${className}`}
-    >
-      {label}
-    </span>
-  )
-}
-
-const priorityTone: Record<Priority, string> = {
-  P0: 'bg-tx text-white',
-  P1: 'bg-sf-secondary text-tx-secondary',
-  P2: 'bg-white text-tx-tertiary border border-st-secondary',
-}
-
-export function PriorityTag({ p }: { p: Priority }) {
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2 py-[3px] font-mono text-[9px] tracking-[0.1em] ${priorityTone[p]}`}
-    >
-      {p}
-    </span>
   )
 }
 

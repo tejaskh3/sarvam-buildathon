@@ -2,22 +2,21 @@ import { useEffect, useState } from 'react'
 
 const links = [
   { href: '#personas', label: 'Who it’s for' },
-  { href: '#contract', label: 'The contract' },
-  { href: '#flow', label: 'How it works' },
-  { href: '#stories', label: 'Build spec' },
-  { href: '#coverage', label: 'Impact' },
+  { href: '#loop', label: 'How it remembers' },
+  { href: '#experience', label: 'What it’s like' },
+  { href: '#family', label: 'For the family' },
 ]
 
 export function Ticker() {
   const item = (
     <span className="flex items-center gap-3 px-6 font-mono text-[10px] tracking-[0.16em] whitespace-nowrap text-white/70 uppercase">
-      Sarvam Buildathon
+      यादें · Yaadein
       <span className="text-sr-indigo-300">·</span>
-      Voice Experience track
+      A voice companion for elders living with memory loss
       <span className="text-sr-indigo-300">·</span>
-      Saaras v3 · Sarvam-30B · Bulbul v3
+      Speaks Hindi, English & mixed
       <span className="text-sr-indigo-300">·</span>
-      Build spec v1
+      Built on Sarvam
       <span className="text-sr-indigo-300">·</span>
     </span>
   )

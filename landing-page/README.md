@@ -1,8 +1,11 @@
 # यादें · Yaadein — landing page
 
-Landing page for the Sarvam Buildathon entry: a voice companion that learns an
-elder's life story in her own language, and turns it into a memoir chapter, a
-pre-visit briefing, and a coordinator digest.
+A voice companion for elders living with memory loss. Tap the orb and talk — in
+Hindi, English, or both at once. It asks your name and where you live, and a few
+days later opens with *“you mentioned you live in Pune — what do you like about
+Pune?”*, quietly noting whether the answer came back.
+
+The page sells the experience, not the system. `#/try` routes to the live demo.
 
 React + TypeScript + Vite + Tailwind CSS v4.
 
@@ -45,28 +48,32 @@ swap the two `--font-*` values in `src/index.css` — nothing else changes.
 
 ```
 src/
-  data.ts                 all 37 stories, 6 epics, 4 personas, contract, rubric
-  components/ui.tsx       Reveal, Section, SectionHead, badges, tone maps
+  data.ts                 personas, the four-step loop, the six principles,
+                          and what each family member receives
+  components/
+    Orb.tsx               the particle orb, shared with the live demo
+    ui.tsx                Reveal, Section, SectionHead, tone map
   sections/
     Nav.tsx               ticker + sticky nav
-    Hero.tsx              hero + stat strip
-    SessionDemo.tsx       animated 10-minute session, contract passing live
-    Personas.tsx          Savita, Meena, Arjun, Latha
-    Contract.tsx          the six conditions
-    Flow.tsx              BEFORE / DURING / AFTER + the Sarvam stack
-    Integrity.tsx         provenance grades, variance handling, safety floor
-    Stories.tsx           filterable P0/P1/P2 story explorer
-    Coverage.tsx          6 → 34 residents, and what each person receives
-    Done.tsx              rubric table, ship gate, the three decisive stories
+    Hero.tsx              hero + the session demo
+    SessionDemo.tsx       three visits: name → Pune → did it come back?
+    Personas.tsx          Kamala, Meena, Arjun, Latha
+    Contract.tsx          <Loop/> — ask, remember, come back, notice
+    Flow.tsx              <Experience/> — what it's like to use
+    Coverage.tsx          what the family and the coordinator get
     Footer.tsx            closing CTA + footer
+  try/
+    TryPage.tsx           the real thing: mic → agent server → spoken reply
 ```
 
-`data.ts` is the single source of truth — the story explorer, the ship-gate
-chips, the contract badges and the filter counts are all derived from it. Edit
-a story there and every surface updates.
+All page copy lives in `data.ts`. Edit it there and every surface updates.
 
 ## Notes
 
-- The session player in the hero starts only when scrolled into view, and
-  respects `prefers-reduced-motion`.
-- All animation is CSS; no animation library.
+- The hero demo starts only once scrolled into view, and cycles through the
+  three visits. Clicking a visit chip stops the cycling and holds that one.
+- `Orb.tsx` renders the same particle sphere as the live demo, driven by a
+  state prop instead of real microphone level. It stops animating under
+  `prefers-reduced-motion`.
+- The live demo needs the agent server running (`node app/server.js`) and
+  `VITE_API_BASE` pointed at it.

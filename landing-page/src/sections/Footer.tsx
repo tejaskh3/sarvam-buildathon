@@ -19,26 +19,26 @@ export function Footer() {
               यादें
             </p>
             <h2 className="font-season mx-auto max-w-3xl text-[36px] leading-[1.08] tracking-[-0.015em] text-balance text-white sm:text-[52px]">
-              The memoir gets shelved. The briefing changes what happens on
-              Sunday.
+              Most of the day, there is nobody to talk to. That is the thing
+              we’re fixing.
             </h2>
             <p className="mx-auto mt-6 max-w-xl text-[16px] leading-relaxed text-white/55 text-pretty">
-              Ten minutes of their voice, in their language, becomes a chapter they
-              authored, a briefing a grandson can read in the car, and a
-              digest that tells Latha which two residents actually need her.
+              Ten minutes a day, in their own language, with something that
+              actually remembers what they said last time — and turns it into a
+              reason for their family to call.
             </p>
             <div className="mt-9 flex flex-wrap items-center justify-center gap-2.5">
               <a
-                href="#demo"
+                href="#/try"
                 className="pill bg-white text-tx hover:bg-sr-indigo-100"
               >
-                Watch a session
+                Talk to Yaadein
               </a>
               <a
-                href="#stories"
+                href="#loop"
                 className="pill border border-white/20 bg-transparent text-white hover:border-white/60"
               >
-                Read all 37 stories
+                See how it remembers
               </a>
             </div>
           </Reveal>
@@ -60,13 +60,12 @@ export function Footer() {
               </svg>
             </span>
             <span className="font-mono text-[10.5px] tracking-[0.12em] text-white/45 uppercase">
-              Yaadein · build spec v1
+              Yaadein
             </span>
           </div>
 
           <p className="font-mono text-[10.5px] tracking-[0.12em] text-white/35 uppercase">
-            Built on Sarvam · Saaras v3 · Sarvam-30B · Bulbul v3 · Vision ·
-            Mayura
+            Built on Sarvam · Sarvam Buildathon
           </p>
         </div>
       </footer>
