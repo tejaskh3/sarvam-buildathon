@@ -57,7 +57,10 @@ const SYSTEM_PROMPT = `Tum "Yaadein" ho — ek dheeraj-wali, komal aur garam-dil
 6. Achhe shuruaati vishay (jab kuch pata na ho): bachpan ka ghar ya gaon, tyohar, khana-peena, school ke din, dost. Shaadi, bachche, ya parivar ke bare mein khud se mat poochho — agar woh khud batayein toh garmjoshi se saath do.
 7. Agar woh kuch bhool jayein ya atak jayein, aaram se aage badh jao — koi hint-game nahi, koi sudhaar nahi.
 8. Agar woh koi nayi baat batayein, usi mein dilchaspi lo — apna agenda chhod do.
-9. BAHUT chhota jawab: zyada se zyada 2 chhote vaakya + ek chhota sawaal — kul 30 shabd se kam. Garam, saral, bolchal wali Hindi (Devanagari mein). Angrezi shabd aa jayein toh theek hai. Lambi speech unhe thaka deti hai.
+9. GEHRAI se KHODO (sabse zaroori niyam): har jawab mein unki abhi kahi baat se EK thos detail pakdo aur usi mein andar jao — us pal ki bhavna, khushboo, swad, awaaz, ya wahan kaun tha. Generic tareef ("bahut achha!") kabhi kaafi nahi — tareef ke baad HAMESHA us detail par ek khodne wala sawaal.
+   Udaharan (kalpanik): woh kahein "hum talab ke paas patang udate the" → achha: "talab ke paas! Jab patang kat jaati thi toh kya hota tha?" Bura: "patang udana achha hota hai. Aur kya karte the?"
+10. BAHUT chhota jawab: zyada se zyada 2 chhote vaakya + ek chhota sawaal — kul 35 shabd se kam. Garam, saral, bolchal wali bhasha, unki apni bhasha mein (native script). Lambi speech unhe thaka deti hai.
+11. Unki bhasha mein hi bolo. Agar neeche unki bhasha batayi gayi hai, HAMESHA usi bhasha aur uski native script mein jawab do — Hindi mein mat palto.
 
 Output sirf bolne wala text — koi asterisk, emoji, ya stage direction nahi.`;
 
@@ -66,11 +69,14 @@ const sessions = new Map(); // id → { history, personId, personName, context, 
 
 // Build the per-person context block injected as a second system message.
 // Phase 3: known facts + the open loop + revisit-scheduler picks for today.
-function personContext(personId, personName) {
+function personContext(personId, personName, personLang) {
   const facts = db.memoriesFor(personId);
   const loop = db.openLoopFor(personId);
   if (!facts.length && !loop) return null;
   let ctx = `Ye ${personName} ji hain — inse pehle bhi baat hui hai.`;
+  if (personLang && LANG_NAME[personLang]) {
+    ctx += `\nInki bhasha: ${LANG_NAME[personLang]} — HAMESHA isi bhasha mein, iski native script mein jawab do.`;
+  }
   if (facts.length) {
     ctx += `\nJaani hui baatein (inhone khud batayi thin — "Aapne bataya tha ki..." kah kar istemal karo, pareeksha kabhi mat lo):\n`;
     ctx += facts.slice(0, 12).map((f) => `- ${f.statement}`).join("\n");
@@ -130,7 +136,21 @@ async function stt(wavBuffer) {
   const r = await fetch(`${SARVAM}/speech-to-text`, { method: "POST", headers: HDRS, body: form });
   if (!r.ok) throw new Error(`STT ${r.status}: ${await r.text()}`);
   const j = await r.json();
-  return j.transcript || "";
+  return { transcript: j.transcript || "", language: j.language_code || null };
+}
+
+// Bulbul v3 languages — a detected language outside this set falls back to hi-IN
+const BULBUL_LANGS = new Set(["hi-IN", "bn-IN", "en-IN", "gu-IN", "kn-IN", "ml-IN", "mr-IN", "od-IN", "pa-IN", "ta-IN", "te-IN"]);
+const LANG_NAME = { "hi-IN": "Hindi", "mr-IN": "Marathi", "bn-IN": "Bengali", "ta-IN": "Tamil", "te-IN": "Telugu", "kn-IN": "Kannada", "gu-IN": "Gujarati", "ml-IN": "Malayalam", "pa-IN": "Punjabi", "od-IN": "Odia", "en-IN": "English" };
+
+async function translate(text, target = "en-IN", source = "hi-IN") {
+  const r = await fetch(`${SARVAM}/translate`, {
+    method: "POST",
+    headers: { ...HDRS, "content-type": "application/json" },
+    body: JSON.stringify({ input: text, source_language_code: source, target_language_code: target }),
+  });
+  if (!r.ok) throw new Error(`translate ${r.status}: ${await r.text()}`);
+  return (await r.json()).translated_text;
 }
 
 // C6/C4 guard: recall-testing phrases must never reach her voice.
@@ -183,7 +203,7 @@ async function chatOnce(history, context) {
   return j.choices[0].message.content.trim();
 }
 
-async function tts(text) {
+async function tts(text, lang) {
   const r = await fetch(`${SARVAM}/text-to-speech`, {
     method: "POST",
     headers: { ...HDRS, "content-type": "application/json" },
@@ -193,7 +213,7 @@ async function tts(text) {
       speaker: CFG.speaker,
       pace: CFG.pace,
       temperature: CFG.ttsTemperature,
-      target_language_code: CFG.ttsLang,
+      target_language_code: BULBUL_LANGS.has(lang) ? lang : CFG.ttsLang,
       speech_sample_rate: 24000,
       output_audio_codec: "wav",
     }),
@@ -360,7 +380,8 @@ async function handleTurn(sess, sessionId, transcript, audioFile) {
       sess.personId = person.id;
       sess.personName = person.name;
       db.linkSession(sessionId, person.id);
-      sess.context = personContext(person.id, person.name);
+      if (!sess.lang && BULBUL_LANGS.has(person.lang)) sess.lang = person.lang;
+      sess.context = personContext(person.id, person.name, sess.lang);
       if (returning && sess.context) sess.contract.RESUMED = true;
       if (returning && sess.context) {
         // the recognition moment: this exact turn must SHOW the memory (B1)
@@ -380,7 +401,7 @@ async function handleTurn(sess, sessionId, transcript, audioFile) {
   sess.history.push({ role: "assistant", content: reply });
 
   const t2 = Date.now();
-  const audio = await tts(reply);
+  const audio = await tts(reply, sess.lang);
   const tTts = Date.now() - t2;
 
   // persist what the extractor found (after reply — never blocks the voice)
@@ -461,23 +482,44 @@ const server = http.createServer(async (req, res) => {
       };
       let openerInstruction = "(session shuru — namaste kaho, ek vaakya parichay, aur naam poochho)";
 
+      let photo = null;
       if (hint) {
         const person = db.findPerson(hint); // lookup only — a hint must never create
         if (person) {
           sess.personId = person.id;
           sess.personName = person.name;
+          sess.lang = BULBUL_LANGS.has(person.lang) ? person.lang : null; // speak their language from word one
           db.linkSession(id, person.id);
-          sess.context = personContext(person.id, person.name);
+          sess.context = personContext(person.id, person.name, sess.lang);
           if (sess.context) sess.contract.RESUMED = true;
           openerInstruction = `(session shuru — ye ${person.name} ji hain, inka garam swagat karo. Phir adhoora silsila NAAM se kholo, ya sujhayi yaadon mein se ek ka zikr karo: "Aapne bataya tha ki...". Naam mat poochho.)`;
+
+          // Phase 6: an undiscussed family photo becomes the session opener —
+          // stated from family context, questions with no wrong answer (F3)
+          photo = db.nextNewPhoto(person.id);
+          if (photo) {
+            const ppl = JSON.parse(photo.people_json || "[]");
+            const deceased = ppl.filter((x) => x.deceased).map((x) => x.name);
+            openerInstruction = `(session shuru — ye ${person.name} ji hain, garam swagat karo. Unke parivaar ne ek photo bheji hai jo unke saamne screen par aa rahi hai: ${photo.event || "ek yaadgar pal"}${photo.place ? ", " + photo.place : ""}${photo.year ? ", " + photo.year : ""}. Isme hain: ${ppl.map((x) => x.name + (x.relation ? ` (${x.relation})` : "")).join(", ") || "parivaar ke log"}. ${photo.notes ? "Parivaar ne bataya: " + photo.notes + ". " : ""}Photo ko aawaz se BAYAAN karo (unki aankhein kamzor ho sakti hain) — sirf upar di gayi jaankari se, kuch bhi gadho mat. Is turn mein 3 vaakya tak theek hai. Phir EK bhavna-wala sawaal — kabhi "kaun hai / kab tha" jaisa test nahi.${deceased.length ? ` SAAVDHAN: ${deceased.join(", ")} ab nahi rahe — unka zikr sirf past tense mein, unke baare mein khud se sawaal kabhi nahi.` : ""} Naam mat poochho.)`;
+            db.markPhotoShown(photo.id);
+          }
         }
       }
 
-      const opener = await chat([{ role: "user", content: openerInstruction }], sess.context);
+      let opener = await chat([{ role: "user", content: openerInstruction }], sess.context);
+      // language memory: the model won't reliably open in Marathi/Tamil/etc.
+      // from an empty history, so the opener goes through Sarvam Translate.
+      // Mid-conversation it mirrors her language naturally via STT codemix.
+      if (sess.lang && sess.lang !== "hi-IN" && sess.lang !== "en-IN") {
+        opener = await translate(opener, sess.lang, "hi-IN").catch(() => opener);
+      }
       sess.history.push({ role: "assistant", content: opener });
       sessions.set(id, sess);
-      const audio = await tts(opener);
-      json(res, 200, { sessionId: id, text: opener, audio, person: sess.personName });
+      const audio = await tts(opener, sess.lang);
+      json(res, 200, {
+        sessionId: id, text: opener, audio, person: sess.personName,
+        photo: photo ? { id: photo.id, url: `/api/photo-file/${photo.file}`, event: photo.event } : null,
+      });
       return;
     }
 
@@ -489,10 +531,15 @@ const server = http.createServer(async (req, res) => {
 
       const wav = await readBody(req);
       const t0 = Date.now();
-      const transcript = await stt(wav);
+      const { transcript, language } = await stt(wav);
       const tStt = Date.now() - t0;
       if (!transcript.trim()) {
         return json(res, 200, { transcript: "", text: "", audio: null, note: "silence" });
+      }
+      // language memory: remember how they speak; next session opens in it
+      if (language && BULBUL_LANGS.has(language) && language !== "en-IN") {
+        sess.lang = language;
+        if (sess.personId) db.setPersonLang(sess.personId, language);
       }
 
       // keep the turn audio — every memory stays traceable to its recording (B2)
@@ -567,12 +614,63 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // D3: the memoir chapter, source-cited
-    const mmr = req.url.match(/^\/api\/people\/(\d+)\/memoir$/);
+    // D3: the memoir chapter, source-cited. ?lang=en-IN → Sarvam Translate
+    // per paragraph, original preserved alongside.
+    const mmr = req.url.match(/^\/api\/people\/(\d+)\/memoir(?:\?lang=([\w-]+))?$/);
     if (req.method === "GET" && mmr) {
       const p = db.people().find((x) => x.id === Number(mmr[1]));
       if (!p) return json(res, 404, { error: "no such person" });
-      json(res, 200, await generateMemoir(p.id, p.name));
+      const memoir = await generateMemoir(p.id, p.name);
+      if (mmr[2] && memoir.paragraphs.length) {
+        memoir.title_translated = await translate(memoir.title || "", mmr[2]).catch(() => null);
+        for (const para of memoir.paragraphs) {
+          para.translated = await translate(para.text, mmr[2]).catch(() => null);
+        }
+      }
+      json(res, 200, memoir);
+      return;
+    }
+
+    // Bulbul narrates any text (memoir chapters) — capped to one TTS call
+    if (req.method === "POST" && req.url === "/api/narrate") {
+      const { text, lang } = JSON.parse((await readBody(req)).toString());
+      if (!text) return json(res, 400, { error: "no text" });
+      json(res, 200, { audio: await tts(String(text).slice(0, 2400), lang) });
+      return;
+    }
+
+    // Phase 6: family uploads a photo + context (JSON, image as base64)
+    const pup = req.url.match(/^\/api\/people\/(\d+)\/photos$/);
+    if (req.method === "POST" && pup) {
+      const body = JSON.parse((await readBody(req)).toString());
+      if (!body.image_b64) return json(res, 400, { error: "no image" });
+      const ppl = body.people || [];
+      if (!ppl.length || !ppl.every((x) => typeof x.deceased === "boolean")) {
+        return json(res, 400, { error: "every person in the photo needs a name and a deceased yes/no — this is a safety requirement" });
+      }
+      const ext = (body.mime || "image/jpeg").includes("png") ? "png" : "jpg";
+      const file = `p${pup[1]}-${Date.now()}.${ext}`;
+      fs.writeFileSync(path.join(db.DATA_DIR, "photos", file), Buffer.from(body.image_b64, "base64"));
+      db.addPhoto(Number(pup[1]), file, body);
+      json(res, 200, { ok: true, file });
+      return;
+    }
+    if (req.method === "GET" && pup) {
+      json(res, 200, db.photosFor(Number(pup[1])).map((p) => ({ ...p, url: `/api/photo-file/${p.file}`, people: JSON.parse(p.people_json || "[]") })));
+      return;
+    }
+    const pfile = req.url.match(/^\/api\/photo-file\/([\w.-]+\.(?:jpg|png))$/);
+    if (req.method === "GET" && pfile) {
+      const f = path.join(db.DATA_DIR, "photos", pfile[1]);
+      if (!fs.existsSync(f)) return json(res, 404, { error: "no photo" });
+      res.writeHead(200, { "content-type": pfile[1].endsWith("png") ? "image/png" : "image/jpeg", ...CORS });
+      res.end(fs.readFileSync(f));
+      return;
+    }
+
+    // coordinator digest: who needs a human, at a glance
+    if (req.method === "GET" && req.url === "/api/digest") {
+      json(res, 200, db.digest());
       return;
     }
 

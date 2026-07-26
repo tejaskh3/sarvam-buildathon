@@ -52,9 +52,30 @@ for (const ddl of [
   "ALTER TABLE memories ADD COLUMN last_visited TEXT",
   "ALTER TABLE memories ADD COLUMN prov_history TEXT", // e.g. 'USER_STATED,USER_ELABORATED,USER_CONFIRMED'
   "ALTER TABLE memories ADD COLUMN safe_to_use INTEGER DEFAULT 1", // 0 = family marked AVOID (C3)
+  "ALTER TABLE people ADD COLUMN lang TEXT", // last detected language → next session opens in it
 ]) {
   try { db.exec(ddl); } catch { /* column exists */ }
 }
+
+// Phase 6: family-uploaded photos with context. Family context is the
+// source of truth (Sarvam Vision is a document OCR, not a photo captioner
+// — decision logged in docs/DECISIONS.md). Deceased flags are REQUIRED
+// per person in the frame (F2): past tense only, never used as prompts.
+db.exec(`
+CREATE TABLE IF NOT EXISTS photos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  person_id INTEGER NOT NULL,
+  file TEXT NOT NULL,
+  event TEXT,
+  place TEXT,
+  year TEXT,
+  people_json TEXT,                    -- [{name, relation, deceased, elder_knows}]
+  notes TEXT,
+  status TEXT DEFAULT 'NEW',           -- NEW|SHOWN
+  created_at TEXT DEFAULT (datetime('now'))
+);
+`);
+fs.mkdirSync(path.join(DATA_DIR, "photos"), { recursive: true });
 
 // B8: conflicting versions of the same fact — kept, never merged, never
 // resolved with the elder. The parent memory goes UNRESOLVED and out of
@@ -243,5 +264,47 @@ module.exports = {
 
   people() {
     return q.people.all();
+  },
+
+  setPersonLang(personId, lang) {
+    db.prepare("UPDATE people SET lang = ? WHERE id = ?").run(lang, personId);
+  },
+
+  addPhoto(personId, file, meta) {
+    db.prepare(
+      "INSERT INTO photos (person_id, file, event, place, year, people_json, notes) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    ).run(personId, file, meta.event || "", meta.place || "", meta.year || "", JSON.stringify(meta.people || []), meta.notes || "");
+  },
+
+  photosFor(personId) {
+    return db.prepare("SELECT * FROM photos WHERE person_id = ? ORDER BY created_at DESC").all(personId);
+  },
+
+  // next undiscussed photo — only if every person in frame has a resolved
+  // deceased flag (F2: unresolved status ⇒ held back from sessions)
+  nextNewPhoto(personId) {
+    const rows = db.prepare("SELECT * FROM photos WHERE person_id = ? AND status = 'NEW' ORDER BY created_at ASC").all(personId);
+    return rows.find((p) => {
+      try {
+        return JSON.parse(p.people_json || "[]").every((x) => typeof x.deceased === "boolean");
+      } catch { return false; }
+    }) || null;
+  },
+
+  markPhotoShown(photoId) {
+    db.prepare("UPDATE photos SET status = 'SHOWN' WHERE id = ?").run(photoId);
+  },
+
+  // coordinator digest: who needs a human, at a glance
+  digest() {
+    return q.people.all().map((p) => ({
+      id: p.id,
+      name: p.name,
+      lang: p.lang,
+      memories: p.memory_count,
+      unresolved: db.prepare("SELECT COUNT(*) c FROM memories WHERE person_id = ? AND status='UNRESOLVED'").get(p.id).c,
+      avoided: db.prepare("SELECT COUNT(*) c FROM memories WHERE person_id = ? AND safe_to_use=0").get(p.id).c,
+      open_loop: (q.openLoopFor.get(p.id) || {}).topic || null,
+    }));
   },
 };

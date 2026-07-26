@@ -75,8 +75,8 @@ export function Nav() {
         </div>
 
         <div className="flex items-center gap-2">
-          <a href="#demo" className="pill pill-ghost hidden !py-2 !text-[13px] sm:inline-flex">
-            Watch a session
+          <a href="#/family" className="pill pill-ghost hidden !py-2 !text-[13px] sm:inline-flex">
+            For families
           </a>
           <a href="#/try" className="pill pill-primary !py-2 !text-[13px]">
             Try now

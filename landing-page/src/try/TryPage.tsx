@@ -26,7 +26,7 @@ const MAX_REC_MS = 25000 // Saaras REST caps at 30s — send before we hit it
 export function TryPage() {
   const [voice, setVoice] = useState<Voice>('idle')
   const [busy, setBusy] = useState(false)
-  const [lines, setLines] = useState<{ who: 'agent' | 'you'; text: string }[]>([])
+  const [lines, setLines] = useState<{ who: 'agent' | 'you'; text: string; photo?: string }[]>([])
   const [error, setError] = useState<string | null>(null)
   const [contract, setContract] = useState<Record<string, unknown> | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
@@ -225,7 +225,7 @@ export function TryPage() {
         if (j.error) throw new Error(j.error)
         sessionRef.current = j.sessionId
         if (j.person) localStorage.setItem('yaadein-person', j.person)
-        setLines((l) => [...l, { who: 'agent', text: j.text }])
+        setLines((l) => [...l, { who: 'agent', text: j.text, photo: j.photo?.url }])
         await play(j.audio)
       }
       recRef.current = { chunks: [], lastVoice: Date.now(), startedAt: Date.now() }
@@ -349,6 +349,13 @@ export function TryPage() {
                   : 'bg-sr-purple-600 ml-auto text-white'
               }`}
             >
+              {l.photo && (
+                <img
+                  src={`${API}${l.photo}`}
+                  alt="A family memory"
+                  className="photo-pop mb-2.5 w-full max-w-[340px] rounded-xl shadow-md"
+                />
+              )}
               {l.text}
             </div>
           ))}

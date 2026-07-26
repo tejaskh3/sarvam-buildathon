@@ -7,6 +7,7 @@ import { Experience } from './sections/Flow'
 import { Coverage } from './sections/Coverage'
 import { Footer } from './sections/Footer'
 import { TryPage } from './try/TryPage'
+import { FamilyPage } from './family/FamilyPage'
 
 export default function App() {
   const [hash, setHash] = useState(window.location.hash)
@@ -17,6 +18,7 @@ export default function App() {
   }, [])
 
   if (hash === '#/try') return <TryPage />
+  if (hash === '#/family') return <FamilyPage />
 
   return (
     <>
