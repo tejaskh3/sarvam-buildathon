@@ -478,15 +478,13 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Agent opens the conversation — agent-led from turn zero (A9, B1).
-    // Optional body {person: "Ramesh"} = device remembers who talks here →
-    // the opener itself reopens the unfinished thread by name (RESUMED).
+    // The number IS the person: a returning number gets its thread reopened
+    // by name in the opener itself (RESUMED), no device-side hint needed.
     if (req.method === "POST" && req.url === "/api/session/start") {
       const id = crypto.randomUUID();
-      let hint = null, phone = null;
+      let phone = null;
       try {
-        const body = JSON.parse((await readBody(req)).toString() || "{}");
-        hint = body.person || null;
-        phone = String(body.phone || "").trim();
+        phone = String(JSON.parse((await readBody(req)).toString() || "{}").phone || "").trim();
       } catch { /* no body */ }
       if (!phoneOk(phone)) {
         return json(res, 403, { error: "phone_not_allowed" });
@@ -507,8 +505,8 @@ const server = http.createServer(async (req, res) => {
       let openerInstruction = "(session shuru — namaste kaho, ek vaakya parichay, aur naam poochho)";
 
       let photo = null;
-      if (hint) {
-        const person = db.findPerson(hint, phone); // lookup only — a hint must never create
+      {
+        const person = db.findPersonByPhone(phone); // returning number → resume
         if (person) {
           sess.personId = person.id;
           sess.personName = person.name;
@@ -608,6 +606,15 @@ const server = http.createServer(async (req, res) => {
     const vp = req.url.match(/^\/api\/verify-phone\?n=(\d+)$/);
     if (req.method === "GET" && vp) {
       json(res, 200, { ok: phoneOk(vp[1]) });
+      return;
+    }
+
+    // wipe one number's data — demo restarts + the attack suite.
+    // Allowlisted numbers only, so a stranger can't erase anything.
+    if (req.method === "POST" && req.url === "/api/debug/reset") {
+      const { phone } = JSON.parse((await readBody(req)).toString() || "{}");
+      if (!phoneOk(phone)) return json(res, 403, { error: "phone_not_allowed" });
+      json(res, 200, { ok: db.resetPhone(phone) });
       return;
     }
 

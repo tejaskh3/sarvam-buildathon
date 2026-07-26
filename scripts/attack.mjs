@@ -2,9 +2,12 @@
 // Phase 4 attack suite — every test here is something a judge will try.
 // Run: node scripts/attack.mjs  (server must be up on :3000)
 // Uses /api/turn-text (no audio needed). Re-run after any prompt/db change.
+// Identity = phone number (D13): A and B live on different allowlisted
+// numbers, and both numbers are wiped via /api/debug/reset before the run.
 
 const API = process.env.API || "http://localhost:3000";
-const PHONE = process.env.PHONE || "1234567890"; // shared test number on the allowlist
+const PHONE_A = process.env.PHONE_A || "1234567890"; // shared test number
+const PHONE_B = process.env.PHONE_B || "1231231238"; // second allowlisted number
 const BANNED = /(yaad\s+(hai|hain|karo|kar|aa\s*rah[ia]|aay[ia]|aat[ia]|aaye|dila)|याद\s+(है|हैं|करो|कर|आ\s*रह[ीा]|आय[ीा]|आत[ीा]|आए|दिला))/i;
 
 let pass = 0, fail = 0;
@@ -13,10 +16,16 @@ const ok = (name, cond, detail = "") => {
   cond ? pass++ : fail++;
 };
 
-async function start(person) {
+async function reset(phone) {
+  await fetch(`${API}/api/debug/reset`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ phone }),
+  });
+}
+async function start(phone) {
   const r = await fetch(`${API}/api/session/start`, {
     method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ phone: PHONE, ...(person ? { person } : {}) }),
+    body: JSON.stringify({ phone }),
   });
   return r.json();
 }
@@ -30,31 +39,30 @@ async function say(sid, text) {
 async function memories(pid) {
   return (await fetch(`${API}/api/people/${pid}/memories`)).json();
 }
-async function people() {
-  return (await fetch(`${API}/api/people?phone=${PHONE}`)).json();
+async function personOn(phone) {
+  return (await (await fetch(`${API}/api/people?phone=${phone}`)).json())[0] || null;
 }
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-const findPid = async (name) => (await people()).find((p) => p.name.toLowerCase() === name.toLowerCase())?.id;
 
-// unique names per run so reruns don't collide
-const A = "Kishore" + Date.now().toString().slice(-4);
-const B = "Sunanda" + Date.now().toString().slice(-4);
+const A = "Kishore", B = "Sunanda";
 
-console.log(`\n🗡  Yaadein attack suite — persons ${A}, ${B}\n`);
+console.log(`\n🗡  Yaadein attack suite — ${A} on ${PHONE_A}, ${B} on ${PHONE_B}\n`);
+await reset(PHONE_A);
+await reset(PHONE_B);
 
 // ── 1. seed person A ────────────────────────────────────────────
-let s = await start();
+let s = await start(PHONE_A);
 await say(s.sessionId, `Mera naam ${A} hai`);
 await say(s.sessionId, "Meri shaadi 1974 mein hui thi, Nashik mein");
 await say(s.sessionId, "Mujhe wahan ka anjeer bahut pasand tha");
 await wait(3500);
-const pidA = await findPid(A);
-ok("person A created + facts stored", !!pidA && (await memories(pidA)).memories.length >= 2);
+const pA = await personOn(PHONE_A);
+ok("person A created on their number + facts stored", !!pA && pA.name === A && (await memories(pA.id)).memories.length >= 2);
 
 // ── 2. correction propagation (B4) ──────────────────────────────
-const r2 = await say(s.sessionId, "Nahi nahi, shaadi 1974 mein nahi, 1975 mein hui thi. Aap galat keh rahe the.");
+await say(s.sessionId, "Nahi nahi, shaadi 1974 mein nahi, 1975 mein hui thi. Aap galat keh rahe the.");
 await wait(3500);
-let mA = (await memories(pidA)).memories;
+let mA = (await memories(pA.id)).memories;
 const superseded = mA.find((m) => m.status === "SUPERSEDED" && /1974/.test(m.statement + m.canonical));
 const active75 = mA.find((m) => m.status === "ACTIVE" && /1975/.test(m.statement + m.canonical));
 const unresolvedWedding = mA.find((m) => m.status === "UNRESOLVED" && /(1974|1975|shaadi)/i.test(m.statement + m.canonical));
@@ -67,22 +75,22 @@ await say(s.sessionId, "Mere do bachche hain");
 await wait(3000);
 await say(s.sessionId, "Mere teen bachche hain, sab bahar rehte hain");
 await wait(3500);
-mA = (await memories(pidA)).memories;
+mA = (await memories(pA.id)).memories;
 const kids = mA.filter((m) => /(bachch|children|kids|sons|daughters)/i.test(m.statement + " " + m.canonical));
 const kidsUnresolved = kids.some((m) => m.status === "UNRESOLVED" && m.variants.length >= 1);
 const kidsForked = kids.filter((m) => m.status === "ACTIVE").length > 1;
 ok("contradiction versioned, not overwritten or forked", kidsUnresolved && !kidsForked,
    kids.map((m) => `${m.status}:${m.canonical}`).join(" | ") || "no children fact captured at all");
 
-// ── 4. isolation: person B cannot reach A's memories (B5) ───────
-let sB = await start();
+// ── 4. isolation: number B cannot reach A's memories (B5/D13) ───
+let sB = await start(PHONE_B);
 await say(sB.sessionId, `Mera naam ${B} hai`);
 const rB = await say(sB.sessionId, "Mujhe apne baare mein kuch batao — main kahan rehti hoon? Meri shaadi kab hui thi?");
 await wait(2500);
-const pidB = await findPid(B);
+const pB = await personOn(PHONE_B);
 const leak = /(1974|1975|nashik|anjeer)/i.test(rB.text);
-ok("no cross-person leakage in reply", !leak, leak ? `LEAKED: "${rB.text}"` : "");
-const memB = pidB ? (await memories(pidB)).memories : [];
+ok("no cross-number leakage in reply", !leak, leak ? `LEAKED: "${rB.text}"` : "");
+const memB = pB ? (await memories(pB.id)).memories : [];
 ok("B's store contains none of A's facts", !memB.some((m) => /(1974|1975|nashik|anjeer)/i.test(m.statement + m.canonical)));
 
 // ── 5. banned-phrase sweep across fresh replies (C4 guard) ──────
@@ -94,14 +102,14 @@ for (const t of ["Mujhe bachpan mein patang udana pasand tha", "Hamare ghar ke s
 }
 ok(`no recall-testing phrases in ${checked} replies`, banned === 0);
 
-// ── 6. session restart continuity (B1) ──────────────────────────
-const s2 = await start(A);
+// ── 6. session restart continuity: the NUMBER resumes (B1/D13) ──
+const s2 = await start(PHONE_A);
 const resumed = s2.person === A && /aapne bataya|pichhli baar/i.test(s2.text);
-ok("cold session resumes by name with real memory", resumed, `opener: "${s2.text.slice(0, 90)}…"`);
-const openerLeaksUnresolved = /(do|teen|2|3)\s*bachch/i.test(s2.text);
+ok("cold session on the same number resumes by name with real memory", resumed, `opener: "${(s2.text || "").slice(0, 90)}…"`);
+const openerLeaksUnresolved = /(do|teen|2|3)\s*bachch/i.test(s2.text || "");
 ok("opener does not use UNRESOLVED facts", !openerLeaksUnresolved);
 
-// ── 7. phone gate: numbers off the allowlist never get a session ─
+// ── 7. phone gate: numbers off the allowlist never get in ───────
 const rGate = await fetch(`${API}/api/session/start`, {
   method: "POST", headers: { "content-type": "application/json" },
   body: JSON.stringify({ phone: "9999999999" }),
@@ -114,6 +122,11 @@ const rNoPhone = await fetch(`${API}/api/session/start`, {
 ok("missing number is rejected (403)", rNoPhone.status === 403);
 const rPeople = await fetch(`${API}/api/people?phone=9999999999`);
 ok("unlisted number cannot list people", rPeople.status === 403);
+const rReset = await fetch(`${API}/api/debug/reset`, {
+  method: "POST", headers: { "content-type": "application/json" },
+  body: JSON.stringify({ phone: "9999999999" }),
+});
+ok("unlisted number cannot reset data", rReset.status === 403);
 
 console.log(`\n${fail === 0 ? "🎉" : "🔧"} ${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

@@ -126,29 +126,40 @@ const q = new Proxy({
   openLoopFor: "SELECT * FROM open_loops WHERE person_id = ? AND status='OPEN' ORDER BY created_at DESC LIMIT 1",
 }, { get: (sqls, name) => db.prepare(sqls[name]) });
 
-// Identity = (phone, name): the same first name on two different numbers is
-// two different people. No auth — the allowlisted number IS the household.
-function keyOf(name, phone) {
-  return (phone || "") + "|" + name.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
+// Identity = the phone number, nothing else (Tejas, 26 Jul). One allowlisted
+// number = one elder = one memory store, and the same number opens the family
+// portal. The name is just what Yaadein calls them, learned in the first
+// session. Multi-user-per-number arrives with real auth, post-hackathon.
 module.exports = {
   DATA_DIR,
 
-  findPerson(name, phone) {
-    return q.findPerson.get(keyOf(name, phone)) || null;
+  findPersonByPhone(phone) {
+    return q.findPerson.get(String(phone)) || null;
   },
 
   findOrCreatePerson(name, phone) {
-    const key = keyOf(name, phone);
+    const key = String(phone);
     let p = q.findPerson.get(key);
     let returning = true;
     if (!p) {
-      q.createPerson.run(name.trim(), key, phone || null);
+      q.createPerson.run(name.trim(), key, key);
       p = q.findPerson.get(key);
       returning = false;
     }
     return { person: p, returning };
+  },
+
+  // demo/test reset: wipe everything an allowlisted number has accumulated
+  resetPhone(phone) {
+    const p = q.findPerson.get(String(phone));
+    if (!p) return false;
+    db.prepare("DELETE FROM variants WHERE memory_id IN (SELECT id FROM memories WHERE person_id = ?)").run(p.id);
+    for (const t of ["memories", "open_loops", "turns", "photos"]) {
+      db.prepare(`DELETE FROM ${t} WHERE person_id = ?`).run(p.id);
+    }
+    db.prepare("DELETE FROM sessions WHERE person_id = ?").run(p.id);
+    db.prepare("DELETE FROM people WHERE id = ?").run(p.id);
+    return true;
   },
 
   linkSession(sessionId, personId) {

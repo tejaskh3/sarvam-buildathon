@@ -45,6 +45,10 @@
 **Decision:** contradiction detection covers digits + Hindi + English number words. "Pune vs Nagpur"-type (no numbers) contradictions still coexist rather than flag.
 **Why:** the clean fix is an LLM contradiction check on dup-suspects (~30 min, one more Sarvam call per suspect). Deferred to hardening — flagged to testers as known limitation.
 
+## D13 — Identity is the number alone (supersedes the identity half of D11)
+**Decision (Tejas, 26 Jul):** one allowlisted number = one elder = one memory store, and the same number opens the Family Dashboard. The name is only what Yaadein calls them, learned in the first session. This also made the device-side name hint obsolete — a returning number resumes its thread with no localStorage involved.
+**Trade-offs accepted:** two people sharing one number share one persona (multi-user arrives with real auth); everyone on the public test number shares one test persona — expected, and `POST /api/debug/reset {phone}` (allowlisted numbers only) wipes a number for demo restarts. The attack suite now runs A and B on two different numbers and resets both first.
+
 ## D11 — Access by allowlisted phone number; identity = (number, name)
 **Decision (Tejas, 26 Jul):** no auth. A 10-digit number on the server allowlist opens the chat and the Family Dashboard. Public test number **1234567890** (shown in the popup); private team numbers 1231231239 and 1231231238. Allowlist is overridable via `ALLOWED_PHONES` env var on Railway.
 **My additions:** the number also **scopes memory** — a person is (number, name), so testers on different numbers can never see or pollute each other's people; `/api/people` and `/api/digest` require a listed number; unlisted/missing numbers get 403 (3 new attack-suite tests). The number is remembered per device in localStorage.

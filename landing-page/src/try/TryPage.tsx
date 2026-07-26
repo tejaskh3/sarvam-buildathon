@@ -139,7 +139,6 @@ export function TryPage() {
         setState('idle')
         return
       }
-      if (j.person) localStorage.setItem(`yaadein-person-${phoneRef.current}`, j.person)
       if (j.contract) setContract(j.contract)
       setLines((l) => [
         ...l,
@@ -229,12 +228,11 @@ export function TryPage() {
       await ensureMic()
       if (!sessionRef.current) {
         setState('idle', true)
-        // this device remembers who talks here → opener resumes their thread by name
-        const lastPerson = localStorage.getItem(`yaadein-person-${phoneRef.current}`)
+        // the number IS the person — a returning number resumes its thread
         const r = await fetch(`${API}/api/session/start`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ phone: phoneRef.current, ...(lastPerson ? { person: lastPerson } : {}) }),
+          body: JSON.stringify({ phone: phoneRef.current }),
         })
         if (r.status === 403) {
           // number fell off the allowlist — ask again
@@ -246,7 +244,6 @@ export function TryPage() {
         const j = await r.json()
         if (j.error) throw new Error(j.error)
         sessionRef.current = j.sessionId
-        if (j.person) localStorage.setItem(`yaadein-person-${phoneRef.current}`, j.person)
         setLines((l) => [...l, { who: 'agent', text: j.text, photo: j.photo?.url }])
         await play(j.audio)
       }
