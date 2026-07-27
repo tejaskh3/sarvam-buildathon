@@ -9,6 +9,8 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const db = require("./db");
+const clerk = require("./clerk");
+const dodo = require("./dodo");
 
 // ─── env ──────────────────────────────────────────────────────────
 const envPath = path.join(__dirname, ".env");
@@ -72,10 +74,139 @@ const ALLOWED_PHONES = new Set(
   (process.env.ALLOWED_PHONES || `${TEST_PHONE},1231231239,1231231238`)
     .split(",").map((s) => s.trim()).filter(Boolean)
 );
-const phoneOk = (p) => typeof p === "string" && /^\d{10}$/.test(p) && ALLOWED_PHONES.has(p);
+// a number gets in if the family registered it (self-serve) or it's a
+// legacy admin number from the env allowlist
+const phoneOk = (p) =>
+  typeof p === "string" && /^\d{10}$/.test(p) && (ALLOWED_PHONES.has(p) || db.isRegistered(p));
+const isAdmin = (p) => typeof p === "string" && ALLOWED_PHONES.has(p);
+
+// ─── implicit orientation (CST principle) ──────────────────────────
+// Orientation is one of the 14 CST sessions, but the protocol is explicit:
+// deliver it "sensitively and implicitly". So we hand the model today's day,
+// part of day and Hindu-calendar season as a STATEMENT it may mention warmly —
+// and the prompt forbids ever turning it into a question. Never "what day is
+// it?" — that is a test, and testing is the one thing we don't do.
+const DAY_HI = ["ravivaar", "somvaar", "mangalvaar", "budhvaar", "guruvaar", "shukravaar", "shanivaar"];
+const SEASON_HI = [
+  "sardi ka mausam", "sardi ka mausam", "basant", "garmi shuru",
+  "garmi", "garmi aur pehli barsaat", "barsaat", "saawan ki barsaat",
+  "barsaat khatam ho rahi", "tyoharon ka mausam", "sardi shuru", "sardi",
+];
+function nowInIndia() {
+  // Railway runs UTC; elders live in IST. Shift to IST explicitly, then read
+  // the parts in UTC so the server's own timezone can never leak in.
+  const d = new Date(Date.now() + 5.5 * 3600 * 1000);
+  const h = d.getUTCHours();
+  const partOfDay = h < 12 ? "morning" : h < 17 ? "afternoon" : "evening";
+  return { day: DAY_HI[d.getUTCDay()], season: SEASON_HI[d.getUTCMonth()], hour: h, partOfDay };
+}
+function orientationLine() {
+  const { day, season, partOfDay } = nowInIndia();
+  const greet = partOfDay === "morning" ? "subah" : partOfDay === "afternoon" ? "dopahar" : "shaam";
+  return `AAJ KA SAMAY (sirf KATHAN ke roop mein, kabhi sawaal nahi): aaj ${day} hai, ${greet} ka waqt, aur ${season} chal raha hai. Isse ek garam vaakya mein bun sakti ho ("${greet} ki namaste, ${day} hai aaj...") — par "aaj kaunsa din hai?" ya "kaunsa mahina hai?" poochhna SAKHT MANA hai.`;
+}
+
+// ─── CST session themes (Epoch sprint) ─────────────────────────────
+// Straight from the validated CST protocol (Cochrane CD005562; CST-India/
+// SCARF Tamil adaptation; iCST "Old Wives' Tales" = kahavat). Errorless,
+// opinion-first, never scored aloud. Harvesting is silent (engagement table).
+const THEMES = {
+  kahavat: {
+    title: "Kahavatein aur kisse",
+    title_en: "Proverbs & the stories behind them",
+    short: "kahavatein — ek jaani-pehchaani kahavat adhoori chhodo, woh poori karein",
+    instruction: `AAJ KA KHEL — KAHAVATEIN: is baat-cheet mein ek-do baar koi jaani-pehchaani kahavat ya muhavara ADHOORA chhodo aur ruk jao, taaki woh use poora kar sakein. Poora karein toh khushi jatao aur us kahavat se judi UNKI zindagi ki koi baat poochho. Na kar sakein toh tum khud narmi se poori karo aur aage badho. "Galat" ya "socho" jaise shabd kabhi nahi. Ye khel hai, pareeksha nahi.`,
+  },
+  shabd_bazaar: {
+    title: "Shabd bazaar",
+    title_en: "Word bazaar (naming game)",
+    short: "shabd bazaar — milkar ek hi tarah ki cheezein ginwana",
+    instruction: `AAJ KA KHEL — SHABD BAZAAR: milkar ek shreni ki cheezein ginwao (sabziyan, phal, tyohar, ya unke sheher ki jagahein). Tum ek cheez do, phir unhe do-teen dene ka mauka do. Har cheez par garmjoshi dikhao. Jab woh ruk jayein, us shreni se judi ek YAAD par sawaal le jao — kaun banata tha, kahan milta tha, kaisa swad tha. Ginti unke saamne kabhi nahi; "aur socho" jaisa dabaav kabhi nahi.`,
+  },
+  swad: {
+    title: "Swad aur tyohar",
+    title_en: "Tastes & festivals",
+    short: "swad aur tyohar — khaane-peene aur tyoharon ki yaadein",
+    instruction: `AAJ KA VISHAY — SWAD: khaane aur tyoharon ki yaadein — swad, khushboo, kaun banata tha, kaun saath baith kar khata tha. Kisi vyanjan ki vidhi poochhna bahut achha hai: sikhate waqt woh guru ban jaate hain.`,
+  },
+  duniya: {
+    title: "Duniya ki baatein",
+    title_en: "The world & opinions",
+    short: "duniya ki baatein — unki raay",
+    instruction: `AAJ KA VISHAY — RAAY: unki RAAY poochho, tathya kabhi nahi — mausam, tyohar, aajkal ke zamane ka badalna, khel. Har raay ko gambhirta se lo aur usi mein gehre jao. Khabar ya tathya ki pareeksha (kaun, kab, kitne) SAKHT MANA hai.`,
+  },
+  sangeet: {
+    title: "Sangeet aur geet",
+    title_en: "Songs & singers",
+    short: "sangeet — purane geet aur gayak",
+    instruction: `AAJ KA VISHAY — SANGEET: purane geet, pasandida gayak, shaadi-tyohar ke geet. Unhe gungunane ka narmi se nyota do; gaayein toh dil se daad do. Tum khud bol mat sunao — galat ho sakte hain. Geet se judi jagah, log aur mauke poochho.`,
+  },
+};
+// Every instruction above contains example phrasings. The model has parroted
+// such examples verbatim before (and repeated them turn after turn), so the
+// rule is stated once here and appended to all of them.
+const THEME_RULE = ` ATI-ZAROORI: upar diye gaye vaakya sirf UDAHARAN hain — unhe jyon-ka-tyon KABHI mat bolo, apne shabd banao. Ek hi sawaal do baar KABHI mat poochho; agar unka jawab aa gaya hai toh usi mein aage khodo.`;
+for (const t of Object.values(THEMES)) t.instruction += THEME_RULE;
+
+// yaadein = plain reminiscence (default when a photo or open loop is queued)
+const pickTheme = (personId, hasPhotoOrLoop) => {
+  if (hasPhotoOrLoop) return null; // photo/unfinished story always outranks the game
+  const recent = db.lastThemes(personId, 3);
+  const keys = Object.keys(THEMES).filter((k) => !recent.includes(k));
+  const pool = keys.length ? keys : Object.keys(THEMES);
+  return pool[Math.floor(Math.random() * pool.length)];
+};
+
+// How many distinct things did she list? Counts comma/aur/and-separated
+// short noun phrases. Deliberately crude — a trend matters, not precision.
+function countListedItems(text) {
+  const parts = String(text)
+    .split(/[,;।]|\s+(?:aur|और|ani|आणि|and|மற்றும்)\s+/i)
+    .map((s) => s.replace(/[^\p{L}\p{N} ]/gu, "").trim())
+    .filter((s) => s.length > 1 && s.split(/\s+/).length <= 4);
+  return new Set(parts.map((s) => s.toLowerCase())).size;
+}
 
 // ─── sessions: history in memory, memories in SQLite ──────────────
-const sessions = new Map(); // id → { history, personId, personName, context, turn, phone }
+const sessions = new Map(); // id → { history, personId, personName, context, turn, phone, theme }
+let statsCache = null; // { at, data } — /api/stats is public, cache it
+
+// Conversation history lives in memory; without a sweep a long-running server
+// keeps every session forever. Drop anything untouched for 3 hours (an elder's
+// session is ~10 min, so this only ever collects abandoned ones).
+setInterval(() => {
+  const cutoff = Date.now() - 3 * 60 * 60 * 1000;
+  let dropped = 0;
+  for (const [id, s] of sessions) {
+    if ((s.lastSeen || s.startedAt || 0) < cutoff) { sessions.delete(id); dropped++; }
+  }
+  if (dropped) console.log(`[gc] released ${dropped} idle session(s), ${sessions.size} live`);
+}, 15 * 60 * 1000).unref();
+
+// /api/register is public — a script could fill the table. 12 signups per IP
+// per hour is far above any real family and far below anything harmful.
+const regHits = new Map(); // ip → [timestamps]
+function registerAllowed(ip) {
+  const now = Date.now();
+  const hits = (regHits.get(ip) || []).filter((t) => now - t < 3600_000);
+  hits.push(now);
+  regHits.set(ip, hits);
+  if (regHits.size > 5000) regHits.clear(); // crude bound; restarts are cheap
+  return hits.length <= 12;
+}
+
+// Sarvam out of credits (402) is the one failure that looks like a total
+// outage to a user. Name it, so the UI can say something true.
+function sarvamError(e) {
+  const m = String(e && e.message || "");
+  if (/\b402\b|insufficient_quota|No credits/i.test(m)) {
+    return { code: 503, error: "service_credits", message: "Yaadein is briefly unavailable — we're topping up our voice service. Please try again shortly." };
+  }
+  if (/\b429\b/.test(m)) {
+    return { code: 503, error: "service_busy", message: "A lot of families are talking right now. Please try again in a moment." };
+  }
+  return null;
+}
 
 // Build the per-person context block injected as a second system message.
 // Phase 3: known facts + the open loop + revisit-scheduler picks for today.
@@ -154,13 +285,16 @@ const BULBUL_LANGS = new Set(["hi-IN", "bn-IN", "en-IN", "gu-IN", "kn-IN", "ml-I
 const LANG_NAME = { "hi-IN": "Hindi", "mr-IN": "Marathi", "bn-IN": "Bengali", "ta-IN": "Tamil", "te-IN": "Telugu", "kn-IN": "Kannada", "gu-IN": "Gujarati", "ml-IN": "Malayalam", "pa-IN": "Punjabi", "od-IN": "Odia", "en-IN": "English" };
 
 async function translate(text, target = "en-IN", source = "hi-IN") {
+  // shield the brand name — Translate mangles it ("Yaadein" → "यातु")
+  const shielded = text.replace(/yaadein|यादें/gi, "«YDN»");
   const r = await fetch(`${SARVAM}/translate`, {
     method: "POST",
     headers: { ...HDRS, "content-type": "application/json" },
-    body: JSON.stringify({ input: text, source_language_code: source, target_language_code: target }),
+    body: JSON.stringify({ input: shielded, source_language_code: source, target_language_code: target }),
   });
   if (!r.ok) throw new Error(`translate ${r.status}: ${await r.text()}`);
-  return (await r.json()).translated_text;
+  const out = (await r.json()).translated_text;
+  return out.replace(/«\s*YDN\s*»|«YDN»|YDN/g, target === "en-IN" ? "Yaadein" : "यादें");
 }
 
 // C6/C4 guard: recall-testing phrases must never reach her voice.
@@ -188,7 +322,88 @@ async function chat(history, context, model) {
       reply = kept.length ? kept.join(" ") : "Achha, ye toh badi pyari baat hai. Us waqt aapko kaisa lag raha tha?";
     }
   }
+  return dropDanglingRecall(reply);
+}
+
+// Repetition guard. With several instruction layers stacked (theme + reminder
+// + open loop) the model can latch onto one formula and re-ask the same
+// question turn after turn — the single worst thing to do to someone with
+// memory loss, and something no prompt rule reliably prevents. So: measure it,
+// and if a reply echoes the last one, regenerate with the echo forbidden.
+function similarity(a, b) {
+  const w = (s) => new Set(String(s).toLowerCase().replace(/[^\p{L}\p{N} ]/gu, "").split(/\s+/).filter((x) => x.length > 3));
+  const A = w(a), B = w(b);
+  if (!A.size || !B.size) return 0;
+  let hit = 0;
+  for (const x of A) if (B.has(x)) hit++;
+  return hit / Math.min(A.size, B.size);
+}
+
+async function chatNoEcho(history, context, model) {
+  const prevAgent = history.filter((m) => m.role === "assistant").at(-1)?.content || "";
+  let reply = await chat(history, context, model);
+  // also collapse an in-reply duplicate paragraph before comparing
+  reply = dedupeParagraphs(reply);
+  if (prevAgent && similarity(reply, prevAgent) >= 0.7) {
+    console.warn(`[echo] regenerating — reply repeated the last one`);
+    const retry = await chat(
+      history,
+      (context || "") +
+        `\n\nSAKHT NIYAM: pichhla jawab tha — "${prevAgent}". Ab bilkul NAYA vaakya aur NAYA sawaal do. Wahi baat ya wahi sawaal dobara bolna MANA hai. Unki aakhri baat se koi NAYI cheez pakdo.`,
+      model
+    );
+    const better = dedupeParagraphs(retry);
+    if (similarity(better, prevAgent) < similarity(reply, prevAgent)) reply = better;
+  }
   return reply;
+}
+
+// Does this text hand back a fact she already told us? A hint should be an
+// oblique association ("is it connected to healing?"), never a restatement
+// ("your son Akash is a doctor in Mumbai"). Two or more distinctive words
+// shared with one stored memory means it's restating, not hinting.
+function restatesAKnownFact(personId, text) {
+  if (!personId || !text) return false;
+  const words = (s) =>
+    new Set(
+      String(s).toLowerCase().replace(/[^\p{L}\p{N} ]/gu, " ").split(/\s+/)
+        .filter((w) => w.length > 4 && !STOPish.has(w))
+    );
+  const T = words(text);
+  if (!T.size) return false;
+  for (const m of db.memoriesFor(personId)) {
+    const M = words(`${m.statement} ${m.canonical}`);
+    let hit = 0;
+    for (const w of M) if (T.has(w)) hit++;
+    if (hit >= 2) return true;
+  }
+  return false;
+}
+// common conversational words that shouldn't count as revealing content
+const STOPish = new Set([
+  "aapko", "aapke", "aapki", "aapne", "unhone", "hamesha", "bahut", "achha", "achhi",
+  "kaisa", "kaisi", "kabhi", "thoda", "zyada", "waqt", "baate", "baaten", "baat",
+  "karte", "karti", "karta", "hota", "hoti", "rehte", "rehti", "lagta", "lagti",
+]);
+
+// same paragraph twice inside one reply — drop the duplicate
+function dedupeParagraphs(reply) {
+  const parts = String(reply).split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+  const kept = [];
+  for (const p of parts) if (!kept.some((k) => similarity(k, p) >= 0.85)) kept.push(p);
+  return kept.join("\n\n");
+}
+
+// The model sometimes emits the recall phrase with nothing after it —
+// "Aapne bataya tha ki..." — which sounds like Yaadein itself forgot
+// mid-sentence: the exact impression we must never give. Drop the stub.
+function dropDanglingRecall(reply) {
+  const DANGLING = /(aapne\s+bataya\s+tha\s+ki|आपने\s+बताया\s+था\s+कि)\s*[.…]*\s*$/i;
+  const parts = String(reply).split(/\n+/).map((p) => p.trim()).filter(Boolean);
+  const kept = parts.filter((p) => !DANGLING.test(p));
+  const out = (kept.length ? kept : parts).join("\n\n");
+  // also mid-paragraph: "...bataya tha ki... Aaj kya" → drop just the clause
+  return out.replace(/(aapne\s+bataya\s+tha\s+ki|आपने\s+बताया\s+था\s+कि)\s*[.…]{2,}\s*/gi, "").trim();
 }
 
 async function chatOnce(history, context, model) {
@@ -282,6 +497,60 @@ function readBody(req) {
 // ─── family outputs: briefing (D1) + memoir (D3) ──────────────────
 // Both derive ONLY from the governed store: ACTIVE + safe_to_use, with
 // UNRESOLVED facts excluded automatically by memoriesFor().
+
+// ─── Session Scribe: human session → structured report ────────────
+// A day-care facilitator (or a visiting family member) runs their normal
+// session with the phone listening. Saaras transcribes every chunk; one
+// sarvam-105b pass turns the transcript into the note their psychologist
+// writes by hand today. Facts found also enter the memory store, so the AI
+// companion knows what happened in human therapy.
+async function generateScribeReport(personName, transcript, minutes) {
+  const text = transcript.map((t) => t.text).join(" ").slice(0, 12000);
+  if (!text.trim()) return null;
+  const prompt = `You are a clinical documentation assistant for a dementia day-care centre in India.
+Below is a transcript of a ${minutes}-minute reminiscence/cognitive-stimulation session between a facilitator and ${personName}, an elder living with memory loss. The transcript is machine-generated and may be imperfect; never invent anything that is not in it.
+
+Return JSON with exactly these keys:
+{
+ "summary": "3-4 sentences on what happened in the session",
+ "mood": "how the elder seemed emotionally, in a short phrase",
+ "topics": ["life topics that came up, short phrases"],
+ "recall_moments": [{"type": "fluent" | "needed_help", "quote": "the elder's own words, verbatim from the transcript"}],
+ "red_flags": ["anything a clinician should notice: repeated questions, distress, confusion about time or people. Empty array if none."],
+ "for_doctor": "3-4 sentence paragraph a doctor could read before a follow-up visit. Observational only — never a diagnosis, never a treatment recommendation.",
+ "facts": [{"statement": "a fact about the elder's life in their own language", "canonical": "one-line English meaning", "category": "place|person|food|festival|life_event|preference|other", "emotional_tone": "positive|neutral|negative"}]
+}
+Rules: quotes must appear in the transcript. If the transcript is too short or unintelligible, return empty arrays and say so in summary. Output JSON only.
+
+TRANSCRIPT:
+${text}`;
+  const r = await fetch(`${SARVAM}/v1/chat/completions`, {
+    method: "POST",
+    headers: { ...HDRS, "content-type": "application/json" },
+    body: JSON.stringify({
+      model: "sarvam-105b",
+      temperature: 0.2,
+      max_tokens: 1600,
+      reasoning_effort: null,
+      response_format: { type: "json_object" },
+      messages: [{ role: "user", content: prompt }],
+    }),
+  });
+  if (!r.ok) throw new Error(`scribe report ${r.status}: ${await r.text()}`);
+  const raw = (await r.json()).choices[0].message.content;
+  let j;
+  try { j = JSON.parse(raw); } catch { j = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1)); }
+  const arr = (x) => (Array.isArray(x) ? x : []);
+  return {
+    summary: String(j.summary || "").slice(0, 1200),
+    mood: String(j.mood || "").slice(0, 200),
+    topics: arr(j.topics).map(String).slice(0, 10),
+    recall_moments: arr(j.recall_moments).filter((m) => m && m.quote).slice(0, 8),
+    red_flags: arr(j.red_flags).map(String).slice(0, 8),
+    for_doctor: String(j.for_doctor || "").slice(0, 1500),
+    facts: arr(j.facts).filter((f) => f && f.statement).slice(0, 12),
+  };
+}
 
 async function generateBriefing(personId, personName) {
   const facts = db.memoriesFor(personId);
@@ -410,15 +679,55 @@ async function handleTurn(sess, sessionId, transcript, audioFile, delayMs) {
   let turnModel, cueNudge = null;
   if (sess.context && STALL.test(transcript)) {
     turnModel = "sarvam-105b";
-    cueNudge = `ABHI is turn mein (sabse zaroori niyam): ${sess.personName} ji kuch yaad nahi kar pa rahe. "Jaani hui baaton" mein woh baat dhoondo. Ek chhota dilasa do, phir us baat se JUDI cheez ka SIRF EK haan/nahi ishara-sawaal — us baat ke asli shabd (pesha/naam/jagah jo bhi woh bhool rahe hain) bole BINA. Jawab IS turn mein batana sakht MANA hai. "kya tha/kaun tha" jaisa sawaal bhi MANA.`;
+    cueNudge = `ABHI is turn mein (sabse zaroori niyam): ${sess.personName} ji kuch yaad nahi kar pa rahe. "Jaani hui baaton" mein woh baat dhoondo. Ek chhota dilasa do, phir us baat se JUDI cheez ka SIRF EK haan/nahi ishara-sawaal — us baat ke asli shabd (pesha/naam/jagah jo bhi woh bhool rahe hain) bole BINA. Jawab IS turn mein batana sakht MANA hai. "Aapne bataya tha ki..." is turn mein bolna bhi MANA hai (usse jawab khul jata hai). "kya tha/kaun tha" jaisa sawaal bhi MANA.`;
   }
+  // the day's CST theme rides along every turn (rule 8 still outranks it —
+  // if she takes a tangent, the model abandons the game)
+  // The full instruction goes only into the opener. Repeating it every turn made
+// the model restart the game each time (and parrot its examples), so later
+// turns get a one-line nudge instead.
+const themeLine = sess.theme && !cueNudge && sess.contract.ENGAGED.turns <= 5
+    ? `\n\nAAJ KA SILSILA: ${THEMES[sess.theme].short}. Agar ye silsila abhi shuru nahi hua hai toh isi turn mein sahaj tarike se shuru karo; agar shuru ho chuka hai toh aage badhao — dobara shuru mat karo aur wahi vaakya dobara mat bolo. Agar woh apni koi baat sunane lagein toh silsila chhod do aur unki baat suno.`
+    : "";
+  // the reminder is asked for mid-conversation, so it has to ride along too —
+  // it was only reaching the opener before. Dropped once acknowledged, and
+  // never while she is being helped with a stalled memory.
+  const remLine = sess.reminder && !sess.reminderAcked && !cueNudge && sess.contract.ENGAGED.turns >= 2
+    ? `\n\nPARIVAAR KI EK BAAT (is baat-cheet mein SIRF EK BAAR, sahaj tarike se, apnapan se — hukum ki tarah nahi): "${sess.reminder.text}". Agar pehle se keh chuki ho toh dobara mat kaho.`
+    : "";
   const turnContext = sess.context
     ? sess.context
       + (sess.recognitionNudge ? `\n\n${sess.recognitionNudge}` : "")
       + (cueNudge ? `\n\n${cueNudge}` : "")
+      + themeLine
+      + remLine
     : null;
   sess.recognitionNudge = null; // one turn only
-  const reply = await chat(sess.history, turnContext, turnModel);
+  let reply = await chatNoEcho(sess.history, turnContext, turnModel);
+  // A cue must not contain the answer. The model both prefaces hints with
+  // "Aapne bataya tha ki <the fact>" AND sometimes just states the fact
+  // outright, so prompt rules aren't enough: compare the hint against what
+  // she has told us, and treat any restatement as a leak. The reaching is
+  // the therapy — handing over the answer destroys the whole point.
+  if (cueNudge && (/(bataya\s+tha|बताया\s+था)/i.test(reply) || restatesAKnownFact(sess.personId, reply))) {
+    console.warn(`[cue] answer leaked into the hint — regenerating`);
+    const retry = await chatNoEcho(
+      sess.history,
+      turnContext + `\n\nPICHHLA PRAYAS GALAT THA: usme "aapne bataya tha" keh kar jawab khol diya gaya. Ab sirf dilasa + EK haan/nahi ishara-sawaal do. "bataya tha" ye shabd bolna MANA hai.`,
+      "sarvam-105b"
+    );
+    const stillLeaks = /(bataya\s+tha|बताया\s+था)/i.test(retry) || restatesAKnownFact(sess.personId, retry);
+    if (!stillLeaks) reply = retry;
+    else {
+      // last resort: keep only the sentences that don't reveal anything —
+      // typically the comfort line and the yes/no hint
+      const src = restatesAKnownFact(sess.personId, retry) ? retry : reply;
+      const kept = src
+        .split(/(?<=[.?!।])\s+/)
+        .filter((x) => !/(bataya\s+tha|बताया\s+था)/i.test(x) && !restatesAKnownFact(sess.personId, x));
+      reply = kept.length ? kept.join(" ") : "Koi baat nahi. Aaram se sochiye — koi jaldi nahi hai.";
+    }
+  }
   const tChat = Date.now() - t1;
   sess.history.push({ role: "assistant", content: reply });
 
@@ -448,6 +757,30 @@ async function handleTurn(sess, sessionId, transcript, audioFile, delayMs) {
   if (sess.personId && lastAgent) {
     db.addTurn(sess.personId, sessionId, lastAgent, transcript, delayMs);
     if (delayMs != null && delayMs >= 4000) console.log(`[hesitation] ${Math.round(delayMs / 100) / 10}s before answering: "${lastAgent.slice(0, 80)}"`);
+  }
+
+  // adherence signal: if the reminder was mentioned last turn and she answered
+  // with anything affirmative, log it. Crude on purpose — the family sees
+  // "acknowledged 4 times", never a false claim that she took the medicine.
+  if (sess.reminder && lastAgent && !sess.reminderAcked) {
+    const words = sess.reminder.text.toLowerCase().split(/\s+/).filter((w) => w.length > 3);
+    const mentionedIt = words.some((w) => lastAgent.toLowerCase().includes(w));
+    if (mentionedIt && /\b(haan|ha|ji|le liya|le li|kar liya|pi liya|khaya|theek|acha|achha|हाँ|जी|लिया|ठीक)\b/i.test(transcript)) {
+      db.markReminderAcked(sess.reminder.id);
+      sess.reminderAcked = true;
+      console.log(`[reminder] acknowledged: "${sess.reminder.text}"`);
+    }
+  }
+
+  // CST silent harvest: during the naming game, count what she listed.
+  // Semantic verbal fluency is a validated dementia screen — so each round
+  // doubles as a passive measurement. She is never told a number.
+  if (sess.personId && sess.theme === "shabd_bazaar") {
+    const items = countListedItems(transcript);
+    if (items >= 2) {
+      db.addEngagement(sess.personId, sessionId, "shabd_bazaar", "naming_round", items, /nahi|pata nahi|bas/i.test(transcript) ? 0 : 1);
+      console.log(`[fluency] ${sess.personName} named ${items} items`);
+    }
   }
 
   return { reply, audio, tChat, tTts };
@@ -518,7 +851,19 @@ const server = http.createServer(async (req, res) => {
 
       let photo = null;
       {
-        const person = db.findPersonByPhone(phone); // returning number → resume
+        let person = db.findPersonByPhone(phone); // returning number → resume
+        // first-ever call on a registered number: the family already told us
+        // the elder's name + language at signup — greet them personally from
+        // word one instead of asking (voice onboarding stays as fallback)
+        if (!person) {
+          const reg = db.getRegistration(phone);
+          if (reg && reg.elder_name) {
+            person = db.findOrCreatePerson(reg.elder_name, phone).person;
+            if (reg.language && BULBUL_LANGS.has(reg.language)) db.setPersonLang(person.id, reg.language);
+            person = db.findPersonByPhone(phone);
+            console.log(`[person] created from registration: ${person.name} (${reg.language || "lang unknown"})`);
+          }
+        }
         if (person) {
           sess.personId = person.id;
           sess.personName = person.name;
@@ -526,7 +871,11 @@ const server = http.createServer(async (req, res) => {
           db.linkSession(id, person.id);
           sess.context = personContext(person.id, person.name, sess.lang);
           if (sess.context) sess.contract.RESUMED = true;
-          openerInstruction = `(session shuru — ye ${person.name} ji hain, inka garam swagat karo. Phir adhoora silsila NAAM se kholo, ya sujhayi yaadon mein se ek ka zikr karo: "Aapne bataya tha ki...". Naam mat poochho.)`;
+          openerInstruction = sess.context
+            ? `(session shuru — ye ${person.name} ji hain, inka garam swagat karo. Phir adhoora silsila NAAM se kholo, ya sujhayi yaadon mein se ek ka zikr karo: "Aapne bataya tha ki...". Naam mat poochho.)`
+            // registered but never talked before: known name, empty memory —
+            // warm first meeting, never pretend a shared history
+            : `(pehli mulaqat — inka naam ${person.name} ji hai, unke parivaar ne bataya. Garam namaste karo naam se, EK vaakya mein apna parichay do ("Main Yaadein hoon, aapse roz thodi der baat karne aaungi"), phir do naam-wale vishay pesh karo (jaise bachpan ka ghar ya tyohar). "Aapne bataya tha" bolna sakht MANA hai — abhi tak kuch nahi bataya. Naam mat poochho.)`;
 
           // Phase 6: an undiscussed family photo becomes the session opener —
           // stated from family context, questions with no wrong answer (F3)
@@ -537,8 +886,36 @@ const server = http.createServer(async (req, res) => {
             openerInstruction = `(session shuru — ye ${person.name} ji hain, garam swagat karo. Unke parivaar ne ek photo bheji hai jo unke saamne screen par aa rahi hai: ${photo.event || "ek yaadgar pal"}${photo.place ? ", " + photo.place : ""}${photo.year ? ", " + photo.year : ""}. Isme hain: ${ppl.map((x) => x.name + (x.relation ? ` (${x.relation})` : "")).join(", ") || "parivaar ke log"}. ${photo.notes ? "Parivaar ne bataya: " + photo.notes + ". " : ""}Photo ko aawaz se BAYAAN karo (unki aankhein kamzor ho sakti hain) — sirf upar di gayi jaankari se, kuch bhi gadho mat. Is turn mein 3 vaakya tak theek hai. Phir EK bhavna-wala sawaal — kabhi "kaun hai / kab tha" jaisa test nahi.${deceased.length ? ` SAAVDHAN: ${deceased.join(", ")} ab nahi rahe — unka zikr sirf past tense mein, unke baare mein khud se sawaal kabhi nahi.` : ""} Naam mat poochho.)`;
             db.markPhotoShown(photo.id);
           }
+
+          // CST engine: a themed activity for returning elders. A family photo
+          // outranks it entirely (that's its own conversation); an unfinished
+          // story is honoured first, then the game follows in later turns.
+          if (sess.context && !photo) {
+            const key = pickTheme(person.id, false);
+            if (key) {
+              sess.theme = key;
+              const loop = db.openLoopFor(person.id);
+              openerInstruction = openerInstruction.replace(/\)$/, "") +
+                ` ${THEMES[key].instruction} ${loop ? "Pehle adhoora silsila kholo; khel uske baad, jab baat aage badh jaye." : "Swagat ke turant baad khel/vishay shuru karo."})`;
+              db.addEngagement(person.id, id, key, "session_theme", null, null);
+              console.log(`[cst] theme for ${person.name}: ${key}${loop ? " (after open loop)" : ""}`);
+            }
+          }
+
+          // one family reminder, woven in as care — never an alarm clock
+          const rem = db.dueReminder(person.id, nowInIndia().partOfDay);
+          if (rem) {
+            sess.reminder = rem;
+            openerInstruction = openerInstruction.replace(/\)$/, "") +
+              ` PARIVAAR KI EK BAAT: is baat-cheet mein KABHI EK BAAR, apnapan se, ye baat pyaar se yaad dila do — "${rem.text}" — jaise ek apna insaan kehta hai, hukum ki tarah nahi. Ek hi baar, aur baat-cheet ke beech mein sahaj tarike se, shuruaat mein nahi.)`;
+            db.markReminderMentioned(rem.id);
+            console.log(`[reminder] weaving for ${person.name}: "${rem.text}"`);
+          }
         }
       }
+
+      // today's day/season goes in as a statement the model may mention warmly
+      openerInstruction = openerInstruction.replace(/\)$/, "") + ` ${orientationLine()})`;
 
       let opener = await chat([{ role: "user", content: openerInstruction }], sess.context);
       // language memory: the model won't reliably open in Marathi/Tamil/etc.
@@ -548,10 +925,12 @@ const server = http.createServer(async (req, res) => {
         opener = await translate(opener, sess.lang, "hi-IN").catch(() => opener);
       }
       sess.history.push({ role: "assistant", content: opener });
+      sess.startedAt = sess.lastSeen = Date.now();
       sessions.set(id, sess);
       const audio = await tts(opener, sess.lang);
       json(res, 200, {
         sessionId: id, text: opener, audio, person: sess.personName,
+        theme: sess.theme ? { key: sess.theme, title: THEMES[sess.theme].title, title_en: THEMES[sess.theme].title_en } : null,
         // full family context rides along so the UI can caption the photo:
         // whose moment it is, where, when — never a bare unexplained image
         photo: photo ? {
@@ -570,7 +949,8 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && req.url === "/api/turn") {
       const id = req.headers["x-session-id"];
       const sess = sessions.get(id);
-      if (!sess) return json(res, 400, { error: "unknown session — press Start again" });
+      if (!sess) return json(res, 400, { error: "unknown_session", message: "That conversation has ended — press Start to begin again." });
+      sess.lastSeen = Date.now();
 
       const wav = await readBody(req);
       const t0 = Date.now();
@@ -600,7 +980,8 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && req.url === "/api/turn-text") {
       const id = req.headers["x-session-id"];
       const sess = sessions.get(id);
-      if (!sess) return json(res, 400, { error: "unknown session" });
+      if (!sess) return json(res, 400, { error: "unknown_session", message: "That conversation has ended." });
+      sess.lastSeen = Date.now();
       const { text } = JSON.parse((await readBody(req)).toString());
       const delayMs = parseInt(req.headers["x-delay-ms"], 10);
       const out = await handleTurn(sess, id, text, null, Number.isFinite(delayMs) ? delayMs : null);
@@ -630,6 +1011,152 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // Does this deployment require a signed-in family member? The UI asks
+    // before rendering, so the two can never disagree.
+    if (req.method === "GET" && req.url === "/api/auth-config") {
+      json(res, 200, { auth: clerk.enabled() ? "clerk" : "none", sign_in_required: clerk.enabled() });
+      return;
+    }
+
+    // Self-serve signup: a family joins with a 10-digit number.
+    // When Clerk is configured the caller must be signed in, and the household
+    // is claimed by that account — that is what keeps one family from reading
+    // another's memories. Before the keys land, signups work exactly as before.
+    if (req.method === "POST" && req.url === "/api/register") {
+      let body = {};
+      try { body = JSON.parse((await readBody(req)).toString() || "{}"); } catch { /* empty */ }
+      const phone = String(body.phone || "").trim();
+      if (!/^\d{10}$/.test(phone)) {
+        return json(res, 400, { error: "bad_phone", message: "A 10-digit number is required." });
+      }
+      const ip = (req.headers["x-forwarded-for"] || "").split(",")[0].trim() || req.socket.remoteAddress || "?";
+      if (!registerAllowed(ip)) {
+        console.warn(`[register] rate limited ${ip}`);
+        return json(res, 429, { error: "too_many", message: "Too many signups from here. Please try again later." });
+      }
+
+      let verified = 0, ownerId = null;
+      if (clerk.enabled()) {
+        const who = await clerk.userFor(req);
+        if (!who) {
+          return json(res, 401, { error: "sign_in_required", message: "Please sign in first." });
+        }
+        // an already-claimed household can only be re-registered by its owner
+        if (!db.ownsPhone(who.userId, phone)) {
+          console.warn(`[clerk] ${who.userId} tried to claim ${phone}, owned by someone else`);
+          return json(res, 403, { error: "already_claimed", message: "This number is already set up by another family. Please check the number." });
+        }
+        ownerId = who.userId;
+        verified = 1;
+      }
+
+      const { already_existed } = db.register({
+        phone,
+        elder_name: String(body.elder_name || "").trim().slice(0, 60),
+        language: /^[a-z]{2}-IN$/.test(body.language || "") ? body.language : null,
+        family_name: String(body.family_name || "").trim().slice(0, 60),
+        source: String(body.source || "web").slice(0, 30),
+        verified,
+        owner_id: ownerId,
+      });
+      console.log(`[register] ${phone}${already_existed ? " (returning)" : ""} elder=${body.elder_name || "?"} lang=${body.language || "?"} verified=${verified}`);
+      json(res, 200, { ok: true, phone, already_existed, verified: !!verified });
+      return;
+    }
+
+    // ── billing (Dodo Payments) ──
+    // Pricing lives in env, not in the bundle: Tejas can paste a checkout link
+    // into Railway and it is live on the next request — no frontend rebuild.
+    if (req.method === "GET" && req.url.split("?")[0] === "/api/plans") {
+      const phone = (req.url.match(/[?&]phone=(\d{10})\b/) || [])[1] || null;
+      const reg = phone ? db.getRegistration(phone) : null;
+      const withPhone = (url) => {
+        if (!url) return null;
+        if (!phone) return url;
+        // the household number rides along as metadata so the webhook knows
+        // which family just paid — there is no login to tell us
+        return url + (url.includes("?") ? "&" : "?") + `metadata_phone=${phone}`;
+      };
+      json(res, 200, {
+        mode: process.env.DODO_MODE || "test",
+        current_plan: reg ? reg.plan : null,
+        contact_whatsapp: process.env.DODO_CONTACT_WHATSAPP || null,
+        plans: [
+          { key: "founding", name: "Founding Family", price: 0, period: "forever",
+            checkout_url: null },
+          { key: "family", name: "Family", price: 1499, period: "month",
+            checkout_url: withPhone(process.env.DODO_FAMILY_LINK) },
+          { key: "centre", name: "Care Centres", price: 600, period: "seat / month",
+            checkout_url: withPhone(process.env.DODO_CENTRE_LINK) },
+        ],
+      });
+      return;
+    }
+
+    // Dodo calls this when money moves. Signature-verified, idempotent, and it
+    // always answers 200 once the signature is good — a 500 here just makes
+    // Dodo retry a payment we have already recorded.
+    if (req.method === "POST" && req.url === "/api/dodo/webhook") {
+      const raw = await readBody(req);
+      if (!dodo.configured()) {
+        console.warn("[dodo] webhook hit but DODO_WEBHOOK_SECRET is unset");
+        return json(res, 503, { error: "webhook_not_configured" });
+      }
+      const v = dodo.verifyWebhook(req.headers, raw);
+      if (!v.ok) {
+        console.warn(`[dodo] rejected webhook: ${v.reason}`);
+        return json(res, 401, { error: v.reason });
+      }
+
+      let event = {};
+      try { event = JSON.parse(raw.toString() || "{}"); } catch { /* logged below */ }
+      const type = String(event.type || "unknown");
+      const wid = req.headers["webhook-id"];
+
+      if (!db.firstSeenWebhook(wid, type)) {
+        console.log(`[dodo] duplicate ${type} (${wid}) — already handled`);
+        return json(res, 200, { ok: true, duplicate: true });
+      }
+
+      const { phone, via } = dodo.phoneFrom(event);
+      db.recordPayment({
+        phone, event_type: type,
+        status: event.data?.status || null,
+        amount: dodo.amountFrom(event),
+        currency: event.data?.currency || "INR",
+        mode: process.env.DODO_MODE || "test",
+        raw: raw.toString(),
+      });
+
+      const plan = dodo.PLAN_FOR[type];
+      if (plan && phone) {
+        // setPlan only touches an existing registration, so the weaker
+        // customer-phone attribution can never invent a household.
+        const moved = db.setPlan(phone, plan);
+        console.log(
+          `[dodo] ${type} phone=${phone} (via ${via}) ` +
+          (moved ? `plan=${plan}` : "— no registration for that number, recorded only")
+        );
+      } else if (!phone) {
+        // shared link, or someone paid from the dashboard. The row is saved
+        // with phone=NULL; reconcile by email from the Dodo dashboard.
+        console.log(`[dodo] unattributed ${type} — no metadata_phone and no customer phone`);
+      } else {
+        console.log(`[dodo] ${type} phone=${phone} — recorded, plan unchanged`);
+      }
+      json(res, 200, { ok: true });
+      return;
+    }
+
+    // admin traction view — legacy env numbers only
+    const regs = req.url.match(/^\/api\/registrations\?admin=(\d+)$/);
+    if (req.method === "GET" && regs) {
+      if (!isAdmin(regs[1])) return json(res, 403, { error: "not_admin" });
+      const rows = db.registrations();
+      json(res, 200, { count: rows.length, rows });
+      return;
+    }
+
     // wipe one number's data — demo restarts + the attack suite.
     // Allowlisted numbers only, so a stranger can't erase anything.
     if (req.method === "POST" && req.url === "/api/debug/reset") {
@@ -640,6 +1167,27 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ── memory inspector API (scoped to the caller's number) ──
+    // ── family-data gate ──────────────────────────────────────────
+    // Everything below this line is the family's private view of one elder.
+    // With Clerk configured, the caller must be signed in and must own that
+    // household; without it, behaviour is unchanged (number-scoped only).
+    // The elder's own voice routes are ABOVE this line on purpose — an elder
+    // with dementia cannot sign in, and must never be asked to.
+    if (clerk.enabled() && /^\/api\/(people|memories|reminders|scribe|digest)\b/.test(req.url)) {
+      const who = await clerk.userFor(req);
+      if (!who) return json(res, 401, { error: "sign_in_required", message: "Please sign in to see your family's dashboard." });
+      const phoneInUrl = (req.url.match(/[?&]phone=(\d{10})\b/) || [])[1];
+      const idInUrl = (req.url.match(/^\/api\/people\/(\d+)\b/) || [])[1];
+      const okOwner = phoneInUrl ? db.ownsPhone(who.userId, phoneInUrl)
+        : idInUrl ? db.ownsPerson(who.userId, idInUrl)
+        : true; // sub-resources (memories/:id/..., reminders/:id) checked by their own handlers
+      if (!okOwner) {
+        console.warn(`[clerk] ${who.userId} denied access to ${req.url}`);
+        return json(res, 403, { error: "not_your_household", message: "That isn't one of your family members." });
+      }
+      req.clerkUser = who;
+    }
+
     const ppl = req.url.match(/^\/api\/people(?:\?phone=(\d+))?$/);
     if (req.method === "GET" && ppl) {
       if (!phoneOk(ppl[1])) return json(res, 403, { error: "phone_not_allowed" });
@@ -649,6 +1197,107 @@ const server = http.createServer(async (req, res) => {
     const mem = req.url.match(/^\/api\/people\/(\d+)\/memories$/);
     if (req.method === "GET" && mem) {
       json(res, 200, { memories: db.inspectMemories(Number(mem[1])), open_loop: db.openLoopFor(Number(mem[1])) || null });
+      return;
+    }
+
+    // ── reminders the family sets (woven into conversation, not alarms) ──
+    const remGet = req.url.match(/^\/api\/people\/(\d+)\/reminders$/);
+    if (req.method === "GET" && remGet) {
+      json(res, 200, { reminders: db.remindersFor(Number(remGet[1])) });
+      return;
+    }
+    if (req.method === "POST" && remGet) {
+      const b = JSON.parse((await readBody(req)).toString() || "{}");
+      if (!String(b.text || "").trim()) return json(res, 400, { error: "no_text", message: "What should Yaadein gently remind them about?" });
+      const rid = db.addReminder(Number(remGet[1]), b.text, b.time_of_day);
+      json(res, 200, { ok: true, id: rid });
+      return;
+    }
+    const remPost = req.url.match(/^\/api\/reminders\/(\d+)$/);
+    if (req.method === "POST" && remPost) {
+      const b = JSON.parse((await readBody(req)).toString() || "{}");
+      db.setReminderActive(Number(remPost[1]), !!b.active);
+      json(res, 200, { ok: true });
+      return;
+    }
+
+    // ── Session Scribe: record a HUMAN-run session → structured report ──
+    if (req.method === "POST" && req.url === "/api/scribe/start") {
+      const body = JSON.parse((await readBody(req)).toString() || "{}");
+      if (!phoneOk(String(body.phone || ""))) return json(res, 403, { error: "phone_not_allowed" });
+      const person = db.findPersonByPhone(String(body.phone));
+      if (!person) return json(res, 400, { error: "no_person", message: "Have one conversation first, then sessions can be recorded." });
+      const sid = crypto.randomUUID();
+      db.scribeStart(sid, person.id, String(body.facilitator || "").slice(0, 80));
+      console.log(`[scribe] started ${sid} for ${person.name} (${body.facilitator || "facilitator unnamed"})`);
+      json(res, 200, { scribeId: sid, person: person.name, person_id: person.id });
+      return;
+    }
+
+    const scc = req.url.match(/^\/api\/scribe\/([\w-]+)\/chunk$/);
+    if (req.method === "POST" && scc) {
+      const s = db.scribeGet(scc[1]);
+      if (!s) return json(res, 404, { error: "unknown_scribe" });
+      const wav = await readBody(req);
+      const seq = parseInt(req.headers["x-seq"], 10) || s.transcript.length;
+      // 16kHz mono PCM16: 32000 bytes ≈ 1 second
+      const seconds = Math.max(0, (wav.length - 44) / 32000);
+      if (wav.length < 8000) return json(res, 200, { ok: true, transcribed_seconds: s.seconds, note: "silence" });
+      let text = "", lang = null;
+      try {
+        const out = await stt(wav);
+        text = out.transcript || "";
+        lang = out.language || null;
+      } catch (e) {
+        console.warn(`[scribe] chunk ${seq} stt failed: ${e.message}`);
+        return json(res, 200, { ok: true, transcribed_seconds: s.seconds, note: "chunk_failed" });
+      }
+      const total = text.trim() ? db.scribeAppend(scc[1], seq, text, lang, seconds) : s.seconds;
+      json(res, 200, { ok: true, transcribed_seconds: Math.round(total), text });
+      return;
+    }
+
+    const scf = req.url.match(/^\/api\/scribe\/([\w-]+)\/finish$/);
+    if (req.method === "POST" && scf) {
+      const s = db.scribeGet(scf[1]);
+      if (!s) return json(res, 404, { error: "unknown_scribe" });
+      if (s.status === "DONE" && s.report) return json(res, 200, { report: s.report, memories_added: 0 });
+      const minutes = Math.max(1, Math.round(s.seconds / 60));
+      const p = db.people().find((x) => x.id === s.person_id);
+      let report;
+      try {
+        report = await generateScribeReport(p ? p.name : "the elder", s.transcript, minutes);
+      } catch (e) {
+        console.error(`[scribe] report failed: ${e.message}`);
+        return json(res, 500, { error: "report_failed", message: e.message });
+      }
+      if (!report) return json(res, 400, { error: "nothing_recorded", message: "No speech was captured in this session." });
+      report.duration_min = minutes;
+      report.language = (s.transcript.find((t) => t.lang) || {}).lang || null;
+
+      // facts observed in human therapy join the same memory store, so the
+      // AI companion can pick the thread up tomorrow (own provenance grade)
+      let added = 0;
+      if (report.facts.length) {
+        db.saveMemories(s.person_id, `scribe:${scf[1]}`, report.facts.map((f) => ({ ...f, provenance: "SESSION_OBSERVED" })), null);
+        added = report.facts.length;
+      }
+      db.scribeFinish(scf[1], report);
+      console.log(`[scribe] ${scf[1]} done — ${minutes}min, ${added} memories, ${report.red_flags.length} flags`);
+      json(res, 200, { report, memories_added: added });
+      return;
+    }
+
+    const scr = req.url.match(/^\/api\/people\/(\d+)\/scribe-reports$/);
+    if (req.method === "GET" && scr) {
+      json(res, 200, { reports: db.scribeReportsFor(Number(scr[1])) });
+      return;
+    }
+
+    // CST engagement: rounds played + the fluency trend (biomarker)
+    const eng = req.url.match(/^\/api\/people\/(\d+)\/engagement$/);
+    if (req.method === "GET" && eng) {
+      json(res, 200, db.engagementFor(Number(eng[1])));
       return;
     }
 
@@ -738,6 +1387,14 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // public traction counters (60s cache — judges will refresh this)
+    if (req.method === "GET" && req.url === "/api/stats") {
+      const now = Date.now();
+      if (!statsCache || now - statsCache.at > 60000) statsCache = { at: now, data: db.stats() };
+      json(res, 200, statsCache.data);
+      return;
+    }
+
     // coordinator digest: who needs a human, at a glance
     const dig = req.url.match(/^\/api\/digest(?:\?phone=(\d+))?$/);
     if (req.method === "GET" && dig) {
@@ -758,12 +1415,24 @@ const server = http.createServer(async (req, res) => {
     json(res, 404, { error: "not found" });
   } catch (e) {
     console.error(e);
-    json(res, 500, { error: String(e.message || e) });
+    // credit/rate failures upstream must not read as "the app is broken"
+    const known = sarvamError(e);
+    if (known) return json(res, known.code, { error: known.error, message: known.message });
+    json(res, 500, { error: "server_error", message: String(e.message || e) });
   }
 });
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`\n🪔 Yaadein listening on http://localhost:${PORT}\n`);
+  console.log(`\n🪔 Yaadein listening on http://localhost:${PORT}`);
+  // One line that says exactly which keys have landed, so nobody has to guess
+  // why OTP isn't prompting or a payment didn't upgrade anyone.
+  const on = (v) => (v ? "✅" : "⬜");
+  console.log(
+    `   ${on(clerk.enabled())} Clerk sign-in ${clerk.enabled() ? `(${clerk.issuer()})` : "(set CLERK_PUBLISHABLE_KEY)"}` +
+    `   ${on(dodo.configured())} Dodo webhook` +
+    `   ${on(process.env.DODO_FAMILY_LINK)} Family checkout` +
+    `   [${process.env.DODO_MODE || "test"} mode]\n`
+  );
   ensureAcks().catch((e) => console.warn("[acks] init failed:", e.message));
 });

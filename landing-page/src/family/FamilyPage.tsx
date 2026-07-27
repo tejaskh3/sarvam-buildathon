@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { PhoneGate, clearStoredPhone, getStoredPhone } from '../components/PhoneGate'
+import { AccountButton, RequireFamilySignIn } from '../components/Auth'
+import { authFetch } from '../lib/auth'
 import { Logo } from '../components/Logo'
 
 /* ------------------------------------------------------------------
@@ -36,6 +38,24 @@ type Photo = {
   id: number; url: string; event: string; place: string; year: string
   status: string; people: { name: string; relation?: string; deceased: boolean }[]
 }
+type Reminder = {
+  id: number; text: string; time_of_day: string; active: number
+  mention_count: number; ack_count: number
+}
+type ScribeReport = {
+  summary: string; mood: string; topics: string[]
+  recall_moments: { type: 'fluent' | 'needed_help'; quote: string }[]
+  red_flags: string[]; for_doctor: string
+  duration_min?: number; language?: string | null
+}
+type ScribeRow = {
+  id: string; facilitator: string | null; status: string; seconds: number
+  created_at: string; report: ScribeReport | null
+}
+type Engagement = {
+  rounds: { theme: string; detail: string; items: number | null; enjoyed: number | null; created_at: string }[]
+  fluency_trend: { at: string; items: number }[]
+}
 type Signals = {
   alerts: { question: string; answer: string; delay_ms: number; created_at: string; severity: 'high' | 'medium' }[]
   fading: { id: number; statement: string; canonical: string; visit_count: number }[]
@@ -49,19 +69,20 @@ const PROV_STYLE: Record<string, string> = {
   USER_ELABORATED: 'bg-sky-500/10 text-sky-700',
   USER_CORRECTED: 'bg-sr-purple-600/10 text-sr-purple-600',
   FAMILY_VERIFIED: 'bg-sr-green-600/15 text-sr-green-600',
+  SESSION_OBSERVED: 'bg-teal-500/10 text-teal-700',
 }
 
 export function FamilyPage() {
   const [people, setPeople] = useState<Person[]>([])
   const [pid, setPid] = useState<number | null>(null)
-  const [tab, setTab] = useState<'briefing' | 'signals' | 'memoir' | 'memories' | 'photos'>('briefing')
+  const [tab, setTab] = useState<'briefing' | 'signals' | 'scribe' | 'memoir' | 'memories' | 'photos'>('briefing')
   /* the family sees only the people on THEIR number — no auth, just the allowlist */
   const [phone, setPhone] = useState<string | null>(getStoredPhone)
   const [gateOpen, setGateOpen] = useState(true)
 
   useEffect(() => {
     if (!phone) return
-    fetch(`${API}/api/people?phone=${phone}`)
+    authFetch(`${API}/api/people?phone=${phone}`)
       .then((r) => {
         if (r.status === 403) {
           clearStoredPhone()
@@ -79,9 +100,7 @@ export function FamilyPage() {
 
   return (
     <div className="bg-sf min-h-screen">
-      {!phone && gateOpen && (
-        <PhoneGate api={API} onDone={setPhone} onClose={() => setGateOpen(false)} />
-      )}
+      <SignedInOnlyGate phone={phone} gateOpen={gateOpen} setPhone={setPhone} setGateOpen={setGateOpen} />
       <header className="mx-auto flex w-full max-w-[1180px] items-center justify-between px-5 py-4 sm:px-8">
         <a href="#top" onClick={() => (window.location.hash = '')} className="flex items-center gap-2">
           <Logo size={30} />
@@ -90,10 +109,12 @@ export function FamilyPage() {
         </a>
         <div className="flex gap-2">
           <a href="#/try" className="pill pill-ghost !py-2 !text-[13px]">Talk to Yaadein</a>
+          <AccountButton />
           <a href="#top" onClick={() => (window.location.hash = '')} className="pill pill-ghost !py-2 !text-[13px]">← Site</a>
         </div>
       </header>
 
+      <RequireFamilySignIn>
       <main className="mx-auto w-full max-w-[880px] px-5 pb-20 sm:px-8">
         <h1 className="font-season text-tx mt-4 text-[32px] tracking-tight">Before you visit</h1>
         <p className="text-tx-secondary mt-1 text-[15px]">
@@ -137,6 +158,7 @@ export function FamilyPage() {
                 [
                   ['briefing', 'Visit briefing'],
                   ['signals', 'Alerts & trends'],
+                  ['scribe', 'Session notes'],
                   ['memoir', 'Living memoir'],
                   ['memories', 'Every memory'],
                   ['photos', 'Photos'],
@@ -155,8 +177,9 @@ export function FamilyPage() {
             </div>
 
             <div className="mt-6">
-              {tab === 'briefing' && <BriefingTab pid={pid} />}
+              {tab === 'briefing' && <BriefingTabWithReminders pid={pid} />}
               {tab === 'signals' && <SignalsTab pid={pid} />}
+              {tab === 'scribe' && <ScribeTab pid={pid} phone={phone} />}
               {tab === 'memoir' && <MemoirTab pid={pid} />}
               {tab === 'memories' && <MemoriesTab pid={pid} />}
               {tab === 'photos' && <PhotosTab pid={pid} />}
@@ -164,7 +187,24 @@ export function FamilyPage() {
           </>
         )}
       </main>
+      </RequireFamilySignIn>
     </div>
+  )
+}
+
+/* The number prompt belongs after sign-in — asking for a phone number on top
+   of a sign-in card is two walls at once. */
+function SignedInOnlyGate({
+  phone, gateOpen, setPhone, setGateOpen,
+}: {
+  phone: string | null; gateOpen: boolean
+  setPhone: (p: string | null) => void; setGateOpen: (b: boolean) => void
+}) {
+  if (phone || !gateOpen) return null
+  return (
+    <RequireFamilySignIn>
+      <PhoneGate api={API} onDone={setPhone} onClose={() => setGateOpen(false)} />
+    </RequireFamilySignIn>
   )
 }
 
@@ -183,11 +223,11 @@ function OverviewPanel({ pid }: { pid: number }) {
   useEffect(() => {
     setMems(null)
     setSig(null)
-    fetch(`${API}/api/people/${pid}/memories`)
+    authFetch(`${API}/api/people/${pid}/memories`)
       .then((r) => r.json())
       .then((j) => { setMems(j.memories ?? []); setLoop(j.open_loop?.topic ?? null) })
       .catch(() => setMems([]))
-    fetch(`${API}/api/people/${pid}/signals`)
+    authFetch(`${API}/api/people/${pid}/signals`)
       .then((r) => r.json())
       .then(setSig)
       .catch(() => setSig(null))
@@ -314,7 +354,7 @@ function BriefingTab({ pid }: { pid: number }) {
   useEffect(() => {
     setB(null)
     setErr(false)
-    fetch(`${API}/api/people/${pid}/briefing`)
+    authFetch(`${API}/api/people/${pid}/briefing`)
       .then((r) => r.json())
       .then(setB)
       .catch(() => setErr(true))
@@ -344,16 +384,39 @@ function BriefingTab({ pid }: { pid: number }) {
   )
 }
 
+function BriefingTabWithReminders({ pid }: { pid: number }) {
+  return (
+    <div className="space-y-4">
+      <BriefingTab pid={pid} />
+      <RemindersCard pid={pid} />
+    </div>
+  )
+}
+
 /* ── alerts & trends (recall-difficulty tracking) ─────────────── */
+
+const THEME_LABEL: Record<string, string> = {
+  kahavat: 'Proverbs & stories',
+  shabd_bazaar: 'Word bazaar (naming)',
+  swad: 'Tastes & festivals',
+  duniya: 'The world & opinions',
+  sangeet: 'Songs & singers',
+}
 
 function SignalsTab({ pid }: { pid: number }) {
   const [s, setS] = useState<Signals | null>(null)
+  const [eng, setEng] = useState<Engagement | null>(null)
   useEffect(() => {
     setS(null)
-    fetch(`${API}/api/people/${pid}/signals`)
+    setEng(null)
+    authFetch(`${API}/api/people/${pid}/signals`)
       .then((r) => r.json())
       .then(setS)
       .catch(() => setS({ alerts: [], fading: [], series: [], thresholds: { slow_ms: 4000, very_slow_ms: 7000 } }))
+    authFetch(`${API}/api/people/${pid}/engagement`)
+      .then((r) => r.json())
+      .then(setEng)
+      .catch(() => setEng({ rounds: [], fluency_trend: [] }))
   }, [pid])
 
   if (!s) return <Loading text="Reading the conversation signals…" />
@@ -410,6 +473,50 @@ function SignalsTab({ pid }: { pid: number }) {
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {/* CST activities + the word-fluency trend (a validated screen, played as a game) */}
+      {eng && (eng.rounds.length > 0 || eng.fluency_trend.length > 0) && (
+        <div className="border-st-secondary rounded-2xl border bg-white px-6 py-5">
+          <h3 className="text-tx text-[15px] font-semibold">Daily activities &amp; word fluency</h3>
+          <p className="text-tx-tertiary mt-1 text-[13px]">
+            Yaadein plays a different game each day — proverbs, naming, songs, food, opinions — drawn from the
+            cognitive stimulation protocol used in dementia clinics. Nobody is scored out loud; how many things
+            they name in the naming game is recorded quietly here, because word fluency is one of the oldest
+            measures of memory health.
+          </p>
+
+          {eng.fluency_trend.length > 0 && (
+            <div className="mt-4">
+              <p className="text-tx-tertiary font-mono text-[9px] tracking-[0.14em] uppercase">
+                Things named per naming game
+              </p>
+              <div className="mt-2.5 flex items-end gap-2">
+                {eng.fluency_trend.slice(-14).map((f) => {
+                  const max = Math.max(...eng.fluency_trend.map((x) => x.items), 5)
+                  return (
+                    <div key={f.at} className="flex flex-1 flex-col items-center gap-1" title={`${f.at}: ${f.items} named`}>
+                      <span className="text-tx-tertiary text-[10px]">{f.items}</span>
+                      <div
+                        className="bg-sr-green-600/60 w-full rounded-t"
+                        style={{ height: `${Math.max(6, (f.items / max) * 64)}px` }}
+                      />
+                      <span className="text-tx-tertiary text-[9px]">{f.at.slice(5)}</span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          <div className="mt-4 flex flex-wrap gap-1.5">
+            {[...new Set(eng.rounds.map((r) => r.theme))].map((t) => (
+              <span key={t} className="bg-sf-secondary text-tx-secondary rounded-full px-2.5 py-1 text-[11px]">
+                {THEME_LABEL[t] ?? t}
+              </span>
+            ))}
+          </div>
         </div>
       )}
 
@@ -496,6 +603,401 @@ function TrendChart({ series, slowMs }: { series: Signals['series']; slowMs: num
   )
 }
 
+/* ── gentle reminders (woven into conversation, never an alarm) ── */
+
+function RemindersCard({ pid }: { pid: number }) {
+  const [rows, setRows] = useState<Reminder[] | null>(null)
+  const [text, setText] = useState('')
+  const [when, setWhen] = useState('any')
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(() => {
+    authFetch(`${API}/api/people/${pid}/reminders`)
+      .then((r) => r.json())
+      .then((j) => setRows(j.reminders ?? []))
+      .catch(() => setRows([]))
+  }, [pid])
+  useEffect(() => { setRows(null); load() }, [pid, load])
+
+  const add = async () => {
+    if (!text.trim()) return
+    setBusy(true)
+    try {
+      await authFetch(`${API}/api/people/${pid}/reminders`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: text.trim(), time_of_day: when }),
+      })
+      setText('')
+      load()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const toggle = async (r: Reminder) => {
+    await authFetch(`${API}/api/reminders/${r.id}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ active: r.active ? 0 : 1 }),
+    })
+    load()
+  }
+
+  const input = 'border-st-secondary text-tx focus:border-tx w-full rounded-lg border bg-white px-3 py-2 text-[14px] outline-none'
+
+  return (
+    <div className="border-st-secondary rounded-2xl border bg-white px-6 py-5">
+      <h3 className="text-tx text-[15px] font-semibold">Things to gently remind them</h3>
+      <p className="text-tx-tertiary mt-1 text-[13px] leading-relaxed">
+        Yaadein brings one of these into the conversation the way a daughter would — once, in passing, never as
+        an alarm. You&apos;ll see how often it was mentioned and how often they answered.
+      </p>
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        <input
+          placeholder="e.g. subah ki dawai nashte ke baad"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && void add()}
+          className={input + ' min-w-[220px] flex-1'}
+        />
+        <select value={when} onChange={(e) => setWhen(e.target.value)} className={input + ' w-auto'}>
+          <option value="any">any time</option>
+          <option value="morning">morning</option>
+          <option value="afternoon">afternoon</option>
+          <option value="evening">evening</option>
+        </select>
+        <button onClick={() => void add()} disabled={busy || !text.trim()} className="pill pill-primary !py-2 !text-[13px] disabled:opacity-40">
+          Add
+        </button>
+      </div>
+
+      <div className="mt-4 space-y-2">
+        {(rows ?? []).map((r) => (
+          <div
+            key={r.id}
+            className={`flex flex-wrap items-center gap-2 rounded-xl border px-4 py-2.5 ${
+              r.active ? 'border-st-secondary' : 'border-st-secondary bg-sf-secondary opacity-60'
+            }`}
+          >
+            <span className="text-tx flex-1 text-[14px]">{r.text}</span>
+            <span className="text-tx-tertiary text-[11px]">{r.time_of_day}</span>
+            <span
+              className={`rounded-full px-2 py-0.5 font-mono text-[10px] ${
+                r.ack_count > 0 ? 'bg-sr-green-600/10 text-sr-green-600' : 'bg-sf-secondary text-tx-tertiary'
+              }`}
+              title="How many times they answered when it came up"
+            >
+              answered {r.ack_count}/{r.mention_count}
+            </span>
+            <button onClick={() => void toggle(r)} className="text-tx-tertiary hover:text-tx text-[12px] underline">
+              {r.active ? 'pause' : 'resume'}
+            </button>
+          </div>
+        ))}
+        {rows && rows.length === 0 && (
+          <p className="text-tx-tertiary text-[13px]">Nothing yet — medicine, water, a walk, a call to someone.</p>
+        )}
+      </div>
+      <p className="text-tx-tertiary mt-3 text-[11px]">
+        &ldquo;Answered&rdquo; means they responded warmly when it came up — not proof the medicine was taken.
+      </p>
+    </div>
+  )
+}
+
+/* ── session notes (Scribe: record a human-run session) ───────── */
+
+function ScribeTab({ pid, phone }: { pid: number; phone: string | null }) {
+  const [rows, setRows] = useState<ScribeRow[] | null>(null)
+  const [facilitator, setFacilitator] = useState('')
+  const [state, setState] = useState<'idle' | 'recording' | 'finishing'>('idle')
+  const [seconds, setSeconds] = useState(0)
+  const [heard, setHeard] = useState<string[]>([])
+  const [err, setErr] = useState<string | null>(null)
+  const scribeId = useRef<string | null>(null)
+  const ctxRef = useRef<AudioContext | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const bufRef = useRef<Float32Array[]>([])
+  const seqRef = useRef(0)
+  const recordingRef = useRef(false)
+
+  const load = useCallback(() => {
+    authFetch(`${API}/api/people/${pid}/scribe-reports`)
+      .then((r) => r.json())
+      .then((j) => setRows(j.reports ?? []))
+      .catch(() => setRows([]))
+  }, [pid])
+  useEffect(() => { setRows(null); load() }, [pid, load])
+
+  /* flush whatever is buffered as one chunk (~20s) — the server transcribes
+     each chunk as it lands, so a long session never hits the 30s STT cap */
+  const flush = useCallback(async () => {
+    const chunks = bufRef.current
+    bufRef.current = []
+    if (!chunks.length || !scribeId.current) return
+    const wav = encodeWavPcm(chunks, 16000)
+    if (wav.size < 8000) return
+    try {
+      const r = await authFetch(`${API}/api/scribe/${scribeId.current}/chunk`, {
+        method: 'POST',
+        headers: { 'x-seq': String(seqRef.current++) },
+        body: wav,
+      })
+      const j = await r.json()
+      if (j.transcribed_seconds != null) setSeconds(j.transcribed_seconds)
+      if (j.text) setHeard((h) => [...h.slice(-3), j.text])
+    } catch { /* a dropped chunk must never stop the session */ }
+  }, [])
+
+  const start = async () => {
+    setErr(null)
+    try {
+      const r = await authFetch(`${API}/api/scribe/start`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ phone, person_id: pid, facilitator }),
+      })
+      const j = await r.json()
+      if (j.error) throw new Error(j.message || j.error)
+      scribeId.current = j.scribeId
+      seqRef.current = 0
+      bufRef.current = []
+      setSeconds(0)
+      setHeard([])
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: false, noiseSuppression: true },
+      })
+      streamRef.current = stream
+      const ctx = new AudioContext({ sampleRate: 16000 })
+      ctxRef.current = ctx
+      const src = ctx.createMediaStreamSource(stream)
+      const proc = ctx.createScriptProcessor(4096, 1, 1)
+      let framesSinceFlush = 0
+      proc.onaudioprocess = (e) => {
+        if (!recordingRef.current) return
+        bufRef.current.push(new Float32Array(e.inputBuffer.getChannelData(0)))
+        framesSinceFlush += 4096
+        if (framesSinceFlush >= 16000 * 20) { // ~20s
+          framesSinceFlush = 0
+          void flush()
+        }
+      }
+      src.connect(proc)
+      proc.connect(ctx.destination)
+      recordingRef.current = true
+      setState('recording')
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  const stop = async () => {
+    recordingRef.current = false
+    setState('finishing')
+    await flush()
+    streamRef.current?.getTracks().forEach((t) => t.stop())
+    void ctxRef.current?.close()
+    try {
+      const r = await authFetch(`${API}/api/scribe/${scribeId.current}/finish`, { method: 'POST' })
+      const j = await r.json()
+      if (j.error) throw new Error(j.message || j.error)
+      load()
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setState('idle')
+      scribeId.current = null
+    }
+  }
+
+  const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`
+  const input = 'border-st-secondary text-tx focus:border-tx w-full rounded-lg border bg-white px-3 py-2 text-[14px] outline-none'
+
+  return (
+    <div className="space-y-6">
+      <div className="border-st-secondary rounded-2xl border bg-white px-6 py-5 print:hidden">
+        <h3 className="text-tx text-[15px] font-semibold">Record a session with a real person</h3>
+        <p className="text-tx-tertiary mt-1 text-[13px] leading-relaxed">
+          For a therapist, an activity coordinator, or a family member visiting: press start, put the phone
+          down, and have your normal conversation. Yaadein listens, then writes the session note — what was
+          discussed, how they seemed, what a doctor should know — and adds what it learned to their memory book.
+        </p>
+
+        {state === 'idle' ? (
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <input
+              placeholder="Who is running this session? (e.g. Meena, activity coordinator)"
+              value={facilitator}
+              onChange={(e) => setFacilitator(e.target.value)}
+              className={input + ' max-w-[380px] flex-1'}
+            />
+            <button onClick={() => void start()} className="pill pill-primary !py-2 !text-[13px]">
+              ● Start recording
+            </button>
+          </div>
+        ) : (
+          <div className="mt-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="flex items-center gap-2 rounded-full bg-red-50 px-3 py-1.5">
+                <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-red-500" />
+                <span className="font-mono text-[13px] text-red-700">{mmss(seconds)}</span>
+              </span>
+              <button
+                onClick={() => void stop()}
+                disabled={state === 'finishing'}
+                className="pill pill-ghost !py-2 !text-[13px] disabled:opacity-50"
+              >
+                {state === 'finishing' ? 'Writing the note…' : '■ Stop & write the note'}
+              </button>
+              <span className="text-tx-tertiary text-[12px]">Transcribing as you talk — leave this page open.</span>
+            </div>
+            {heard.length > 0 && (
+              <div className="bg-sf-secondary mt-3 rounded-lg px-3 py-2">
+                <p className="text-tx-tertiary font-mono text-[9px] tracking-[0.14em] uppercase">Heard just now</p>
+                {heard.map((h, i) => (
+                  <p key={i} className="text-tx-secondary mt-1 text-[12px] leading-snug">…{h}</p>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        {err && <p className="mt-3 text-[13px] text-red-700">{err}</p>}
+        <p className="text-tx-tertiary mt-3 text-[11px]">
+          Tell the person they are being recorded, and keep the consent form on file. Audio is transcribed and
+          then only the text is kept.
+        </p>
+      </div>
+
+      {!rows ? (
+        <Loading text="Loading session notes…" />
+      ) : rows.length === 0 ? (
+        <p className="text-tx-tertiary text-[14px] print:hidden">No recorded sessions yet.</p>
+      ) : (
+        rows.map((row) => <ScribeCard key={row.id} row={row} />)
+      )}
+    </div>
+  )
+}
+
+function ScribeCard({ row }: { row: ScribeRow }) {
+  const r = row.report
+  if (!r) {
+    return (
+      <div className="border-st-secondary rounded-2xl border bg-white px-6 py-4">
+        <p className="text-tx-tertiary text-[13px]">
+          {row.created_at} · {row.status === 'RECORDING' ? 'still recording' : 'no note written'}
+        </p>
+      </div>
+    )
+  }
+  return (
+    <article className="border-st-secondary rounded-2xl border bg-white px-6 py-5 print:break-inside-avoid print:border-0">
+      <header className="border-st-secondary mb-3 flex flex-wrap items-baseline justify-between gap-2 border-b pb-3">
+        <div>
+          <h3 className="font-season text-tx text-[19px]">Session note</h3>
+          <p className="text-tx-tertiary mt-0.5 text-[12px]">
+            {row.created_at} · {r.duration_min ?? Math.round(row.seconds / 60)} min
+            {row.facilitator ? ` · with ${row.facilitator}` : ''}
+          </p>
+        </div>
+        <button onClick={() => window.print()} className="pill pill-ghost !py-1.5 !text-[12px] print:hidden">
+          Print for the doctor
+        </button>
+      </header>
+
+      <p className="text-tx text-[15px] leading-relaxed">{r.summary}</p>
+
+      <dl className="mt-4 space-y-3">
+        {r.mood && (
+          <div>
+            <dt className="text-tx-tertiary font-mono text-[9px] tracking-[0.14em] uppercase">How they seemed</dt>
+            <dd className="text-tx mt-0.5 text-[14px]">{r.mood}</dd>
+          </div>
+        )}
+        {r.topics?.length > 0 && (
+          <div>
+            <dt className="text-tx-tertiary font-mono text-[9px] tracking-[0.14em] uppercase">Talked about</dt>
+            <dd className="mt-1 flex flex-wrap gap-1.5">
+              {r.topics.map((t, i) => (
+                <span key={i} className="bg-sf-secondary text-tx-secondary rounded-full px-2.5 py-1 text-[12px]">{t}</span>
+              ))}
+            </dd>
+          </div>
+        )}
+        {r.recall_moments?.length > 0 && (
+          <div>
+            <dt className="text-tx-tertiary font-mono text-[9px] tracking-[0.14em] uppercase">In their own words</dt>
+            <dd className="mt-1 space-y-1.5">
+              {r.recall_moments.map((m, i) => (
+                <p
+                  key={i}
+                  className={`border-l-2 pl-3 text-[13.5px] leading-snug ${
+                    m.type === 'fluent' ? 'border-sr-green-600/60 text-tx' : 'border-amber-400 text-tx-secondary'
+                  }`}
+                >
+                  “{m.quote}”
+                  <span className="text-tx-tertiary ml-1.5 text-[11px]">
+                    {m.type === 'fluent' ? 'came easily' : 'needed a hand'}
+                  </span>
+                </p>
+              ))}
+            </dd>
+          </div>
+        )}
+        {r.red_flags?.length > 0 && (
+          <div className="rounded-xl border border-amber-300 bg-amber-50/60 px-4 py-3">
+            <dt className="font-mono text-[9px] tracking-[0.14em] text-amber-700 uppercase">Worth a closer look</dt>
+            <dd className="mt-1">
+              <ul className="space-y-1">
+                {r.red_flags.map((f, i) => (
+                  <li key={i} className="text-tx text-[13.5px] leading-snug">· {f}</li>
+                ))}
+              </ul>
+            </dd>
+          </div>
+        )}
+        {r.for_doctor && (
+          <div className="bg-sf-secondary rounded-xl px-4 py-3">
+            <dt className="text-tx-tertiary font-mono text-[9px] tracking-[0.14em] uppercase">For the doctor</dt>
+            <dd className="text-tx mt-1 text-[14px] leading-relaxed">{r.for_doctor}</dd>
+          </div>
+        )}
+      </dl>
+      <p className="text-tx-tertiary mt-4 text-[11px]">
+        Written from the recording of this session. Observations only — not a diagnosis.
+      </p>
+    </article>
+  )
+}
+
+/* 16kHz mono PCM16 WAV — same encoder the voice page uses */
+function encodeWavPcm(chunks: Float32Array[], rate: number) {
+  let len = 0
+  for (const c of chunks) len += c.length
+  const pcm = new Int16Array(len)
+  let o = 0
+  for (const c of chunks)
+    for (let i = 0; i < c.length; i++) {
+      const v = Math.max(-1, Math.min(1, c[i]))
+      pcm[o++] = v < 0 ? v * 0x8000 : v * 0x7fff
+    }
+  const buf = new ArrayBuffer(44 + pcm.length * 2)
+  const dv = new DataView(buf)
+  const W = (off: number, s: string) => {
+    for (let i = 0; i < s.length; i++) dv.setUint8(off + i, s.charCodeAt(i))
+  }
+  W(0, 'RIFF'); dv.setUint32(4, 36 + pcm.length * 2, true); W(8, 'WAVE'); W(12, 'fmt ')
+  dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true)
+  dv.setUint32(24, rate, true); dv.setUint32(28, rate * 2, true)
+  dv.setUint16(32, 2, true); dv.setUint16(34, 16, true)
+  W(36, 'data'); dv.setUint32(40, pcm.length * 2, true)
+  new Int16Array(buf, 44).set(pcm)
+  return new Blob([buf], { type: 'audio/wav' })
+}
+
 /* ── memoir ───────────────────────────────────────────────────── */
 
 function MemoirTab({ pid }: { pid: number }) {
@@ -507,7 +1009,7 @@ function MemoirTab({ pid }: { pid: number }) {
 
   const load = useCallback((withEnglish: boolean) => {
     setLoading(true)
-    fetch(`${API}/api/people/${pid}/memoir${withEnglish ? '?lang=en-IN' : ''}`)
+    authFetch(`${API}/api/people/${pid}/memoir${withEnglish ? '?lang=en-IN' : ''}`)
       .then((r) => r.json())
       .then(setM)
       .finally(() => setLoading(false))
@@ -524,7 +1026,7 @@ function MemoirTab({ pid }: { pid: number }) {
     setNarrating(true)
     try {
       const text = m.paragraphs.map((p) => p.text).join(' ')
-      const r = await fetch(`${API}/api/narrate`, {
+      const r = await authFetch(`${API}/api/narrate`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ text }),
@@ -602,7 +1104,7 @@ function MemoriesTab({ pid }: { pid: number }) {
   const [loop, setLoop] = useState<string | null>(null)
 
   const load = useCallback(() => {
-    fetch(`${API}/api/people/${pid}/memories`)
+    authFetch(`${API}/api/people/${pid}/memories`)
       .then((r) => r.json())
       .then((j) => {
         setMems(j.memories)
@@ -612,7 +1114,7 @@ function MemoriesTab({ pid }: { pid: number }) {
   useEffect(() => { setMems(null); load() }, [pid, load])
 
   const act = async (url: string, body: object) => {
-    await fetch(`${API}${url}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+    await authFetch(`${API}${url}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
     load()
   }
 
@@ -703,7 +1205,7 @@ function PhotosTab({ pid }: { pid: number }) {
   const [deceased, setDeceased] = useState('')
 
   const load = useCallback(() => {
-    fetch(`${API}/api/people/${pid}/photos`).then((r) => r.json()).then(setPhotos)
+    authFetch(`${API}/api/people/${pid}/photos`).then((r) => r.json()).then(setPhotos)
   }, [pid])
   useEffect(() => { setPhotos(null); load() }, [pid, load])
 
@@ -724,7 +1226,7 @@ function PhotosTab({ pid }: { pid: number }) {
         rd.onerror = () => reject(rd.error ?? new Error('Could not read the photo'))
         rd.readAsDataURL(f)
       })
-      const r = await fetch(`${API}/api/people/${pid}/photos`, {
+      const r = await authFetch(`${API}/api/people/${pid}/photos`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({

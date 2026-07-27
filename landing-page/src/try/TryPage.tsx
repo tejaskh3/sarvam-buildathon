@@ -32,6 +32,8 @@ export function TryPage() {
   const [lines, setLines] = useState<{ who: 'agent' | 'you'; text: string; photo?: PhotoCard }[]>([])
   const [error, setError] = useState<string | null>(null)
   const [contract, setContract] = useState<Record<string, unknown> | null>(null)
+  /* today's CST activity, chosen server-side (display only) */
+  const [theme, setTheme] = useState<{ key: string; title: string; title_en: string } | null>(null)
   /* access = an allowlisted 10-digit number; remembered on this device */
   const [phone, setPhone] = useState<string | null>(getStoredPhone)
   const [gateOpen, setGateOpen] = useState(true) // closable; mic tap reopens
@@ -244,6 +246,7 @@ export function TryPage() {
         const j = await r.json()
         if (j.error) throw new Error(j.error)
         sessionRef.current = j.sessionId
+        if (j.theme) setTheme(j.theme)
         setLines((l) => [...l, { who: 'agent', text: j.text, photo: j.photo ?? undefined }])
         await play(j.audio)
       }
@@ -298,9 +301,21 @@ export function TryPage() {
       </header>
 
       <main className="mx-auto flex w-full max-w-[720px] flex-1 flex-col items-center px-5 pt-6 pb-12">
-        <p className="text-tx-tertiary font-mono text-[10px] tracking-[0.2em] uppercase">
-          Live demo · speaks every Indian language
-        </p>
+        {theme ? (
+          <div
+            className="border-sr-indigo-700/20 bg-sr-indigo-700/5 flex items-center gap-2 rounded-full border px-4 py-1.5"
+            title="Today's activity, from the clinically validated cognitive stimulation protocol"
+          >
+            <span className="text-sr-indigo-700 font-mono text-[9px] tracking-[0.16em] uppercase">
+              Aaj ki baithak
+            </span>
+            <span className="text-tx text-[13px] font-medium">{theme.title}</span>
+          </div>
+        ) : (
+          <p className="text-tx-tertiary font-mono text-[10px] tracking-[0.2em] uppercase">
+            Live demo · speaks every Indian language
+          </p>
+        )}
 
         <Orb voice={voice} levelRef={levelRef} className="mt-2 w-full max-w-[420px]" />
 

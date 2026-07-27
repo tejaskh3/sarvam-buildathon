@@ -45,6 +45,34 @@
 **Decision:** contradiction detection covers digits + Hindi + English number words. "Pune vs Nagpur"-type (no numbers) contradictions still coexist rather than flag.
 **Why:** the clean fix is an LLM contradiction check on dup-suspects (~30 min, one more Sarvam call per suspect). Deferred to hardening — flagged to testers as known limitation.
 
+## D18 — Clerk replaces Firebase; the family signs in, the elder never does
+**Decision (Tejas, 28 Jul):** drop Firebase Phone Auth, use Clerk. Firebase is fully removed (`app/firebase.js`, `src/lib/otp.ts`, the npm package, all env vars and docs).
+**Why Clerk is better here:** real sessions with a real sign-out (phone OTP gave us neither), Google/email sign-in that works instantly in India, and no SMS-delivery risk at a hackathon venue — a failed OTP during the user push would have been unrecoverable.
+**The architectural call I made:** identity is **split**. The **family** (adult child) signs in with Clerk and owns the dashboard; the **elder** is a phone number on a device and never authenticates. Asking someone with memory loss to log in would contradict the product. So `/api/session/start`, `/api/turn`, `/api/stats` are never gated — verified by test — while everything under `/api/people|memories|reminders|scribe|digest` requires a session *and* household ownership when Clerk is on.
+**Ownership model:** the first signed-in account to register a number claims it (`registrations.owner_id`); another account then gets `403 already_claimed`. Numbers registered before Clerk was enabled stay unclaimed and readable, so nobody is locked out of data they already had.
+**Implementation:** `app/clerk.js` verifies session JWTs against Clerk's public JWKS with `node:crypto` — the backend stays at **zero npm dependencies** (no `@clerk/backend`). The issuer is derived from the publishable key, so one env var configures both sides. Everything is feature-flagged: with no key set the app behaves exactly as before, which is also how the attack suite still runs (it exits with a clear warning if pointed at a sign-in-required deployment).
+
+## D14 — CST session themes, chosen server-side, harvested silently
+**Decision (Epoch sprint, 27 Jul):** every returning session runs one of five themed activities from the validated CST protocol — `kahavat` (proverbs), `shabd_bazaar` (category naming), `swad` (food/festivals), `duniya` (opinions), `sangeet` (songs). Least-recently-used selection, server-side; the UI only displays the name. Priority: a family photo outranks the game entirely; an unfinished story is reopened first and the game follows.
+**Why these five:** they are the talk-based sessions from the UCL CST protocol (Cochrane CD005562) as adapted for India by SCARF/Chennai (Tamil-validated) — proverbs are literally the iCST "Old Wives' Tales" activity. Sources in docs/06.
+**The measurement:** category-naming counts are stored in `engagement.items` and never spoken aloud. Semantic verbal fluency is a classic dementia screen, so each round doubles as a passive administration of a validated instrument. Nobody is ever told a number.
+**Honest limit:** the definitive home-iCST RCT (n=356) was null on cognition because family delivery collapsed. We claim only that an always-available agent removes that adherence failure — never proven cognition gains.
+
+## D15 — Conversation-quality guards live in code, not prompts (three new ones)
+**Decision:** three failure modes found in testing are now enforced in code with regression tests, because prompt rules leaked every time:
+1. **Repetition** — with theme + reminder + open-loop instructions stacked, the model re-asked the same question four turns running (the cruelest possible bug here). A similarity check regenerates any reply that echoes the previous one; a paragraph deduplicator catches in-reply repeats.
+2. **Dangling recall** — "Aapne bataya tha ki…" with nothing after it makes *Yaadein* sound like it forgot. Stripped.
+3. **Cue leaking the answer** — the hint kept restating the fact she was reaching for ("your son Akash is a doctor — is he in the healing profession?"). Now any cue that repeats ≥2 distinctive words from a stored memory is regenerated, then sentence-filtered as a last resort. Single-word scaffolding ("he's in Mumbai…") is allowed — a human would do that.
+**Also:** theme instructions were rewritten without quotable example dialogue after the model spoke the examples verbatim, and the full instruction now goes only into the opener (a one-line nudge afterwards) because repeating it made the model restart the game every turn.
+
+## D16 — Reminders are woven, never alarms; orientation is stated, never asked
+**Decision:** at most ONE family reminder per session, delivered mid-conversation in the agent's own words, dropped once acknowledged. Adherence is reported as "answered 2/5" — explicitly *not* "medicine taken", because we cannot know that.
+**Orientation:** day/part-of-day/season (IST) are handed to the model as a statement it may mention warmly; asking "what day is it?" is banned. CST's own guidance is that orientation must be implicit — explicit reality-orientation drilling increases agitation beyond early stages.
+
+## D17 — Session Scribe uses sarvam-105b and its own provenance grade
+**Decision:** the human-session report runs on `sarvam-105b` (not 30b) with `response_format: json_object`, and facts it extracts enter the memory store as `SESSION_OBSERVED` — distinct from anything the elder told the agent directly.
+**Why:** the report is a clinical-adjacent document read by a doctor; quality outranks latency (nobody is waiting on a voice turn). The separate grade keeps the family able to tell "she told Yaadein this" from "this was observed in a session with staff". The prompt forbids diagnosis and treatment advice, and requires quotes to be verbatim from the transcript.
+
 ## D13 — Identity is the number alone (supersedes the identity half of D11)
 **Decision (Tejas, 26 Jul):** one allowlisted number = one elder = one memory store, and the same number opens the Family Dashboard. The name is only what Yaadein calls them, learned in the first session. This also made the device-side name hint obsolete — a returning number resumes its thread with no localStorage involved.
 **Trade-offs accepted:** two people sharing one number share one persona (multi-user arrives with real auth); everyone on the public test number shares one test persona — expected, and `POST /api/debug/reset {phone}` (allowlisted numbers only) wipes a number for demo restarts. The attack suite now runs A and B on two different numbers and resets both first.

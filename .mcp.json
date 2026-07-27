@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "dodopayments": {
+      "command": "npx",
+      "args": ["-y", "dodopayments-mcp@latest"],
+      "env": {
+        "DODO_PAYMENTS_API_KEY": "${DODO_PAYMENTS_API_KEY}",
+        "DODO_PAYMENTS_ENVIRONMENT": "${DODO_PAYMENTS_ENVIRONMENT:-test_mode}"
+      }
+    }
+  }
+}

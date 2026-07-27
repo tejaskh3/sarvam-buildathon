@@ -54,6 +54,7 @@ for (const ddl of [
   "ALTER TABLE memories ADD COLUMN safe_to_use INTEGER DEFAULT 1", // 0 = family marked AVOID (C3)
   "ALTER TABLE people ADD COLUMN lang TEXT", // last detected language → next session opens in it
   "ALTER TABLE people ADD COLUMN phone TEXT", // allowlisted 10-digit number this person belongs to
+  "ALTER TABLE registrations ADD COLUMN owner_id TEXT", // Clerk user who signed this household up
 ]) {
   try { db.exec(ddl); } catch { /* column exists */ }
 }
@@ -77,6 +78,94 @@ CREATE TABLE IF NOT EXISTS photos (
 );
 `);
 fs.mkdirSync(path.join(DATA_DIR, "photos"), { recursive: true });
+
+// Epoch sprint: self-serve registration — any family can join by number.
+// Replaces the fixed env allowlist (which stays as an admin fallback).
+db.exec(`
+CREATE TABLE IF NOT EXISTS registrations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  phone TEXT NOT NULL UNIQUE,
+  elder_name TEXT,
+  language TEXT,
+  family_name TEXT,
+  source TEXT,
+  plan TEXT DEFAULT 'founding',
+  verified INTEGER DEFAULT 0,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+`);
+
+// Billing (Dodo Payments). Checkout is a hosted link, so the only thing that
+// ever reaches us is the webhook — these two tables are its whole footprint.
+// webhook_events is the idempotency ledger: Dodo retries on any non-2xx, and
+// a retried payment.succeeded must not be counted twice on the stats page.
+db.exec(`
+CREATE TABLE IF NOT EXISTS payments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  phone TEXT,
+  event_type TEXT NOT NULL,
+  status TEXT,
+  amount INTEGER,
+  currency TEXT,
+  mode TEXT,
+  raw TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS webhook_events (
+  id TEXT PRIMARY KEY,
+  event_type TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+`);
+
+// Reminders the family sets, woven into conversation — never an alarm.
+// At most one per session; an acknowledgment bumps ack_count so the family
+// can see adherence without anyone being nagged.
+db.exec(`
+CREATE TABLE IF NOT EXISTS reminders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  person_id INTEGER NOT NULL,
+  text TEXT NOT NULL,
+  time_of_day TEXT DEFAULT 'any',      -- morning|afternoon|evening|any
+  active INTEGER DEFAULT 1,
+  last_mentioned TEXT,
+  mention_count INTEGER DEFAULT 0,
+  ack_count INTEGER DEFAULT 0,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+`);
+
+// Session Scribe: a HUMAN-run therapy session (day-care facilitator, or a
+// family member visiting) recorded and turned into a structured report.
+// Day-care psychologists hand-write these notes today — this is the B2B wedge.
+db.exec(`
+CREATE TABLE IF NOT EXISTS scribe_sessions (
+  id TEXT PRIMARY KEY,
+  person_id INTEGER NOT NULL,
+  facilitator TEXT,
+  status TEXT DEFAULT 'RECORDING',     -- RECORDING|DONE
+  transcript_json TEXT,                -- [{seq, text, lang}]
+  report_json TEXT,
+  seconds INTEGER DEFAULT 0,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+`);
+
+// CST engine (Epoch sprint): one row per themed-activity round. The elder
+// never sees a score — items (e.g. vegetables named) are harvested silently.
+// Category-naming counts double as a semantic-verbal-fluency measure.
+db.exec(`
+CREATE TABLE IF NOT EXISTS engagement (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  person_id INTEGER NOT NULL,
+  session_id TEXT,
+  theme TEXT NOT NULL,
+  detail TEXT,
+  items INTEGER,
+  enjoyed INTEGER,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+`);
 
 // Recall-difficulty tracking (mentor feedback, 26 Jul): every voice turn
 // stores the question asked and how long the elder took to START answering
@@ -149,12 +238,208 @@ module.exports = {
     return { person: p, returning };
   },
 
+  // ── reminders ──
+  addReminder(personId, text, timeOfDay) {
+    const r = db.prepare("INSERT INTO reminders (person_id, text, time_of_day) VALUES (?, ?, ?)")
+      .run(personId, String(text).slice(0, 160), ["morning", "afternoon", "evening", "any"].includes(timeOfDay) ? timeOfDay : "any");
+    return Number(r.lastInsertRowid);
+  },
+
+  remindersFor(personId) {
+    return db.prepare("SELECT * FROM reminders WHERE person_id = ? ORDER BY active DESC, created_at DESC").all(personId);
+  },
+
+  setReminderActive(id, active) {
+    db.prepare("UPDATE reminders SET active = ? WHERE id = ?").run(active ? 1 : 0, id);
+  },
+
+  // pick one reminder to weave in: active, matching the time of day, and the
+  // least-recently mentioned so the same one never repeats every session
+  dueReminder(personId, partOfDay) {
+    return db.prepare(
+      `SELECT * FROM reminders WHERE person_id = ? AND active = 1
+         AND (time_of_day = 'any' OR time_of_day = ?)
+       ORDER BY COALESCE(last_mentioned, '1970') ASC, mention_count ASC LIMIT 1`
+    ).get(personId, partOfDay) || null;
+  },
+
+  markReminderMentioned(id) {
+    db.prepare("UPDATE reminders SET last_mentioned = datetime('now'), mention_count = mention_count + 1 WHERE id = ?").run(id);
+  },
+
+  markReminderAcked(id) {
+    db.prepare("UPDATE reminders SET ack_count = ack_count + 1 WHERE id = ?").run(id);
+  },
+
+  // ── Session Scribe ──
+  scribeStart(id, personId, facilitator) {
+    db.prepare("INSERT INTO scribe_sessions (id, person_id, facilitator, transcript_json) VALUES (?, ?, ?, '[]')")
+      .run(id, personId, facilitator || null);
+  },
+
+  scribeGet(id) {
+    const s = db.prepare("SELECT * FROM scribe_sessions WHERE id = ?").get(id);
+    if (!s) return null;
+    return { ...s, transcript: JSON.parse(s.transcript_json || "[]"), report: s.report_json ? JSON.parse(s.report_json) : null };
+  },
+
+  scribeAppend(id, seq, text, lang, seconds) {
+    const s = db.prepare("SELECT transcript_json, seconds FROM scribe_sessions WHERE id = ?").get(id);
+    if (!s) return 0;
+    const t = JSON.parse(s.transcript_json || "[]");
+    t.push({ seq, text, lang });
+    const total = (s.seconds || 0) + Math.round(seconds || 0);
+    db.prepare("UPDATE scribe_sessions SET transcript_json = ?, seconds = ? WHERE id = ?")
+      .run(JSON.stringify(t), total, id);
+    return total;
+  },
+
+  scribeFinish(id, report) {
+    db.prepare("UPDATE scribe_sessions SET status = 'DONE', report_json = ? WHERE id = ?")
+      .run(JSON.stringify(report), id);
+  },
+
+  scribeReportsFor(personId) {
+    return db.prepare(
+      "SELECT id, facilitator, status, report_json, seconds, created_at FROM scribe_sessions WHERE person_id = ? ORDER BY created_at DESC LIMIT 20"
+    ).all(personId).map((s) => ({
+      id: s.id, facilitator: s.facilitator, status: s.status, seconds: s.seconds,
+      created_at: s.created_at, report: s.report_json ? JSON.parse(s.report_json) : null,
+    }));
+  },
+
+  scribeCount() {
+    return db.prepare("SELECT COUNT(*) c FROM scribe_sessions WHERE status = 'DONE'").get().c;
+  },
+
+  // ── CST engagement (silent harvest) ──
+  addEngagement(personId, sessionId, theme, detail, items, enjoyed) {
+    db.prepare(
+      "INSERT INTO engagement (person_id, session_id, theme, detail, items, enjoyed) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run(personId, sessionId, theme, detail || null, items == null ? null : items, enjoyed == null ? null : enjoyed ? 1 : 0);
+  },
+
+  engagementFor(personId) {
+    const rounds = db.prepare(
+      "SELECT theme, detail, items, enjoyed, created_at FROM engagement WHERE person_id = ? ORDER BY created_at DESC LIMIT 60"
+    ).all(personId);
+    // fluency = best category-naming count per day (semantic verbal fluency trend)
+    const fluency_trend = db.prepare(
+      `SELECT date(created_at) AS at, MAX(items) AS items FROM engagement
+       WHERE person_id = ? AND theme = 'shabd_bazaar' AND items IS NOT NULL
+       GROUP BY date(created_at) ORDER BY at ASC LIMIT 30`
+    ).all(personId);
+    return { rounds, fluency_trend };
+  },
+
+  // least-recently-used theme for this person (never repeats yesterday's game)
+  lastThemes(personId, n = 3) {
+    return db.prepare(
+      "SELECT DISTINCT theme FROM engagement WHERE person_id = ? ORDER BY created_at DESC LIMIT ?"
+    ).all(personId, n).map((r) => r.theme);
+  },
+
+  // ── self-serve registration ──
+  getRegistration(phone) {
+    return db.prepare("SELECT * FROM registrations WHERE phone = ?").get(String(phone)) || null;
+  },
+
+  isRegistered(phone) {
+    return !!db.prepare("SELECT 1 FROM registrations WHERE phone = ?").get(String(phone));
+  },
+
+  register({ phone, elder_name, language, family_name, source, verified, owner_id }) {
+    const existing = db.prepare("SELECT * FROM registrations WHERE phone = ?").get(String(phone));
+    if (existing) {
+      // idempotent: fill in anything the first signup left blank
+      db.prepare(
+        `UPDATE registrations SET
+           elder_name = COALESCE(NULLIF(?, ''), elder_name),
+           language   = COALESCE(NULLIF(?, ''), language),
+           family_name= COALESCE(NULLIF(?, ''), family_name),
+           -- first signed-in family to claim an unclaimed household keeps it;
+           -- an existing owner is never overwritten by a later signup
+           owner_id   = COALESCE(owner_id, NULLIF(?, '')),
+           verified   = MAX(verified, ?)
+         WHERE phone = ?`
+      ).run(elder_name || "", language || "", family_name || "", owner_id || "", verified ? 1 : 0, String(phone));
+      return { already_existed: true, owner_id: existing.owner_id || owner_id || null };
+    }
+    db.prepare(
+      "INSERT INTO registrations (phone, elder_name, language, family_name, source, verified, owner_id) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    ).run(String(phone), elder_name || null, language || null, family_name || null, source || "web", verified ? 1 : 0, owner_id || null);
+    return { already_existed: false, owner_id: owner_id || null };
+  },
+
+  // Which households has this signed-in family member claimed? The dashboard
+  // shows only these, so one family can never read another's memories.
+  householdsFor(ownerId) {
+    return db.prepare("SELECT * FROM registrations WHERE owner_id = ? ORDER BY created_at").all(String(ownerId));
+  },
+
+  ownsPhone(ownerId, phone) {
+    const r = db.prepare("SELECT owner_id FROM registrations WHERE phone = ?").get(String(phone));
+    if (!r) return false;
+    // an unclaimed household (registered before sign-in existed) stays readable
+    return !r.owner_id || r.owner_id === String(ownerId);
+  },
+
+  ownsPerson(ownerId, personId) {
+    const p = db.prepare("SELECT phone FROM people WHERE id = ?").get(Number(personId));
+    if (!p || !p.phone) return false;
+    return module.exports.ownsPhone(ownerId, p.phone);
+  },
+
+  // ── billing ──
+  // The plan lives on the registration row: the phone number is the account,
+  // so a payment is just a column change on the household that paid.
+  setPlan(phone, plan) {
+    const r = db.prepare("UPDATE registrations SET plan = ? WHERE phone = ?").run(plan, String(phone));
+    return r.changes > 0;
+  },
+
+  // true the first time we see this webhook id, false on Dodo's retries
+  firstSeenWebhook(id, eventType) {
+    if (db.prepare("SELECT 1 FROM webhook_events WHERE id = ?").get(String(id))) return false;
+    db.prepare("INSERT INTO webhook_events (id, event_type) VALUES (?, ?)").run(String(id), eventType || null);
+    return true;
+  },
+
+  recordPayment({ phone, event_type, status, amount, currency, mode, raw }) {
+    db.prepare(
+      "INSERT INTO payments (phone, event_type, status, amount, currency, mode, raw) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    ).run(phone || null, event_type, status || null, amount == null ? null : Math.round(amount),
+          currency || null, mode || null, raw ? String(raw).slice(0, 4000) : null);
+  },
+
+  paymentsFor(phone) {
+    return db.prepare(
+      "SELECT event_type, status, amount, currency, created_at FROM payments WHERE phone = ? ORDER BY created_at DESC LIMIT 20"
+    ).all(String(phone));
+  },
+
+  // admin traction view: every family + their usage
+  registrations() {
+    return db.prepare("SELECT * FROM registrations ORDER BY created_at DESC").all().map((r) => {
+      const p = db.prepare("SELECT * FROM people WHERE phone = ?").get(r.phone);
+      return {
+        ...r,
+        person_id: p ? p.id : null,
+        person_name: p ? p.name : null,
+        sessions: p ? db.prepare("SELECT COUNT(DISTINCT session_id) c FROM turns WHERE person_id = ?").get(p.id).c : 0,
+        memories: p ? db.prepare("SELECT COUNT(*) c FROM memories WHERE person_id = ?").get(p.id).c : 0,
+      };
+    });
+  },
+
   // demo/test reset: wipe everything an allowlisted number has accumulated
   resetPhone(phone) {
     const p = q.findPerson.get(String(phone));
     if (!p) return false;
     db.prepare("DELETE FROM variants WHERE memory_id IN (SELECT id FROM memories WHERE person_id = ?)").run(p.id);
-    for (const t of ["memories", "open_loops", "turns", "photos"]) {
+    // every per-person table, or a reset leaves orphans that the next person
+    // on this number can never see but that still occupy the number
+    for (const t of ["memories", "open_loops", "turns", "photos", "reminders", "engagement", "scribe_sessions"]) {
       db.prepare(`DELETE FROM ${t} WHERE person_id = ?`).run(p.id);
     }
     db.prepare("DELETE FROM sessions WHERE person_id = ?").run(p.id);
@@ -362,6 +647,23 @@ module.exports = {
   },
 
   // coordinator digest: who needs a human, at a glance
+  // public traction numbers (Epoch criterion 3). Aggregates only — no names.
+  stats() {
+    const one = (sql) => db.prepare(sql).get().c || 0;
+    return {
+      families: one("SELECT COUNT(*) c FROM registrations"),
+      elders: one("SELECT COUNT(*) c FROM people"),
+      sessions: one("SELECT COUNT(DISTINCT session_id) c FROM turns WHERE session_id IS NOT NULL"),
+      // one turn ≈ elder speaking + agent replying; ~35s of conversation
+      minutes_talked: Math.round((one("SELECT COUNT(*) c FROM turns") * 35) / 60),
+      memories: one("SELECT COUNT(*) c FROM memories WHERE status = 'ACTIVE'"),
+      khel_rounds: one("SELECT COUNT(*) c FROM engagement WHERE detail = 'naming_round' OR detail = 'session_theme'"),
+      scribe_sessions: one("SELECT COUNT(*) c FROM scribe_sessions WHERE status = 'DONE'"),
+      photos: one("SELECT COUNT(*) c FROM photos"),
+      languages: db.prepare("SELECT DISTINCT lang FROM people WHERE lang IS NOT NULL").all().map((r) => r.lang),
+    };
+  },
+
   digest(phone) {
     return (phone ? q.peopleFor.all(phone) : q.people.all()).map((p) => ({
       id: p.id,

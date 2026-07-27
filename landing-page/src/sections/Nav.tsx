@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import { Logo } from '../components/Logo'
+import { AccountButton } from '../components/Auth'
 
 const links = [
   { href: '#personas', label: 'Who this is for' },
   { href: '#loop', label: 'How we remember' },
   { href: '#experience', label: 'How to use' },
+  { href: '#pricing', label: 'Pricing' },
   { href: '#about', label: 'About us' },
 ]
 
@@ -80,6 +82,7 @@ export function Nav() {
           <a href="#/try" className="pill pill-primary !py-2 !text-[13px]">
             Try now
           </a>
+          <AccountButton />
           <button
             aria-label="Menu"
             aria-expanded={open}
