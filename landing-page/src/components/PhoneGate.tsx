@@ -43,10 +43,15 @@ export function PhoneGate({
   api,
   onDone,
   onClose,
+  forElder = false,
 }: {
   api: string
   onDone: (phone: string) => void
   onClose?: () => void
+  /* On the elder's own screen we must never present a form: someone with
+     memory loss cannot type a 10-digit number. They get one big button for
+     the shared demo, and a line telling them their family sets this up. */
+  forElder?: boolean
 }) {
   const [step, setStep] = useState<'phone' | 'details'>('phone')
   const [phone, setPhone] = useState('')
@@ -126,7 +131,30 @@ export function PhoneGate({
           </button>
         )}
 
-        {step === 'phone' ? (
+        {forElder ? (
+          <>
+            <h2 className="font-season text-tx text-[22px]">Ready when you are</h2>
+            <p className="text-tx-secondary mt-2 text-[15px] leading-relaxed">
+              This phone hasn&apos;t been set up yet. Your family sends a link once, and after that Yaadein
+              simply knows you.
+            </p>
+            <button
+              onClick={() => {
+                localStorage.setItem(KEY, TEST_PHONE)
+                onDone(TEST_PHONE)
+              }}
+              className="pill pill-primary mt-5 w-full justify-center !py-3 !text-[15px]"
+            >
+              Try a conversation now
+            </button>
+            <p className="text-tx-tertiary mt-3 text-[12.5px] leading-relaxed">
+              This uses a shared demo — anything said here is not private to your family.
+            </p>
+            <a href="#/family" className="text-sr-indigo-700 mt-4 block text-[13px] underline">
+              I&apos;m the family — set this up properly
+            </a>
+          </>
+        ) : step === 'phone' ? (
           <>
             <h2 className="font-season text-tx text-[22px]">Which number is this for?</h2>
             <p className="text-tx-secondary mt-1.5 text-[14px] leading-relaxed">

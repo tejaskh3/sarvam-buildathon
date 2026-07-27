@@ -20,9 +20,12 @@ export default function App() {
     return () => window.removeEventListener('hashchange', onHash)
   }, [])
 
-  if (hash === '#/try') return <TryPage />
-  if (hash === '#/family') return <FamilyPage />
-  if (hash === '#/stats') return <StatsPage />
+  /* match the route only, so a setup link like #/try?n=9876543210 still routes
+     (exact matching silently dropped anyone arriving with a parameter) */
+  const route = hash.split('?')[0]
+  if (route === '#/try') return <TryPage />
+  if (route === '#/family') return <FamilyPage />
+  if (route === '#/stats') return <StatsPage />
 
   return (
     <>

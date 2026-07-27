@@ -1167,6 +1167,28 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ── memory inspector API (scoped to the caller's number) ──
+    // Which households does the signed-in family member own? With Clerk on,
+    // a returning family shouldn't have to retype a phone number the server
+    // already associates with their account.
+    if (req.method === "GET" && req.url === "/api/households") {
+      if (!clerk.enabled()) return json(res, 200, { auth: "none", households: [] });
+      const who = await clerk.userFor(req);
+      if (!who) return json(res, 401, { error: "sign_in_required", message: "Please sign in." });
+      const rows = db.householdsFor(who.userId).map((r) => {
+        const p = db.findPersonByPhone(r.phone);
+        return {
+          phone: r.phone,
+          elder_name: r.elder_name || (p ? p.name : null),
+          language: r.language || (p ? p.lang : null),
+          plan: r.plan,
+          person_id: p ? p.id : null,
+          has_talked: !!p,
+        };
+      });
+      json(res, 200, { auth: "clerk", households: rows });
+      return;
+    }
+
     // ── family-data gate ──────────────────────────────────────────
     // Everything below this line is the family's private view of one elder.
     // With Clerk configured, the caller must be signed in and must own that

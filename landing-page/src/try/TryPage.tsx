@@ -35,7 +35,20 @@ export function TryPage() {
   /* today's CST activity, chosen server-side (display only) */
   const [theme, setTheme] = useState<{ key: string; title: string; title_en: string } | null>(null)
   /* access = an allowlisted 10-digit number; remembered on this device */
-  const [phone, setPhone] = useState<string | null>(getStoredPhone)
+  /* A setup link (#/try?n=9876543210) is how a family hands this device to the
+     elder: they send it on WhatsApp, the elder taps once, and this screen never
+     asks for anything again. Typing a 10-digit number is precisely what the
+     person this is built for cannot do. */
+  const [phone, setPhone] = useState<string | null>(() => {
+    const linked = new URLSearchParams(window.location.hash.split('?')[1] || '').get('n')
+    if (linked && /^\d{10}$/.test(linked)) {
+      localStorage.setItem('yaadein-phone', linked)
+      // drop the number from the address bar so it isn't re-shared by accident
+      history.replaceState(null, '', window.location.pathname + '#/try')
+      return linked
+    }
+    return getStoredPhone()
+  })
   const [gateOpen, setGateOpen] = useState(true) // closable; mic tap reopens
   const phoneRef = useRef(phone)
   phoneRef.current = phone
@@ -278,7 +291,7 @@ export function TryPage() {
   return (
     <div className="bg-sf flex min-h-screen flex-col">
       {!phone && gateOpen && (
-        <PhoneGate api={API} onDone={setPhone} onClose={() => setGateOpen(false)} />
+        <PhoneGate api={API} onDone={setPhone} onClose={() => setGateOpen(false)} forElder />
       )}
       <header className="mx-auto flex w-full max-w-[1180px] items-center justify-between px-5 py-4 sm:px-8">
         <a

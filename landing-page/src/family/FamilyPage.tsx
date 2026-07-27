@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { PhoneGate, clearStoredPhone, getStoredPhone } from '../components/PhoneGate'
 import { AccountButton, RequireFamilySignIn } from '../components/Auth'
-import { authFetch } from '../lib/auth'
+import { authFetch, clerkConfigured } from '../lib/auth'
 import { Logo } from '../components/Logo'
 
 /* ------------------------------------------------------------------
@@ -76,9 +76,30 @@ export function FamilyPage() {
   const [people, setPeople] = useState<Person[]>([])
   const [pid, setPid] = useState<number | null>(null)
   const [tab, setTab] = useState<'briefing' | 'signals' | 'scribe' | 'memoir' | 'memories' | 'photos'>('briefing')
-  /* the family sees only the people on THEIR number — no auth, just the allowlist */
+  /* Two identities, on purpose: Clerk says WHO the family member is, the phone
+     number says WHICH elder. So a signed-in family never retypes the number —
+     we ask the server which households their account owns. */
   const [phone, setPhone] = useState<string | null>(getStoredPhone)
   const [gateOpen, setGateOpen] = useState(true)
+  const [linking, setLinking] = useState(clerkConfigured())
+
+  useEffect(() => {
+    if (!clerkConfigured()) { setLinking(false); return }
+    let live = true
+    authFetch(`${API}/api/households`)
+      .then((r) => (r.ok ? r.json() : { households: [] }))
+      .then((j: { households?: { phone: string }[] }) => {
+        if (!live) return
+        const first = j.households?.[0]
+        if (first) {
+          localStorage.setItem('yaadein-phone', first.phone)
+          setPhone(first.phone)
+        }
+      })
+      .catch(() => {/* not signed in yet — the sign-in wall handles it */})
+      .finally(() => live && setLinking(false))
+    return () => { live = false }
+  }, [])
 
   useEffect(() => {
     if (!phone) return
@@ -100,7 +121,9 @@ export function FamilyPage() {
 
   return (
     <div className="bg-sf min-h-screen">
-      <SignedInOnlyGate phone={phone} gateOpen={gateOpen} setPhone={setPhone} setGateOpen={setGateOpen} />
+      {!linking && (
+        <SignedInOnlyGate phone={phone} gateOpen={gateOpen} setPhone={setPhone} setGateOpen={setGateOpen} />
+      )}
       <header className="mx-auto flex w-full max-w-[1180px] items-center justify-between px-5 py-4 sm:px-8">
         <a href="#top" onClick={() => (window.location.hash = '')} className="flex items-center gap-2">
           <Logo size={30} />
@@ -137,15 +160,18 @@ export function FamilyPage() {
               <span className="ml-1.5 opacity-60">{p.memory_count}</span>
             </button>
           ))}
-          {!people.length && phone && (
-            <p className="text-tx-tertiary text-[14px]">No one yet — have a first conversation on the Try page.</p>
-          )}
-          {!phone && (
+          {!people.length && phone && <span className="hidden" />}
+          {!phone && !linking && (
             <button onClick={() => setGateOpen(true)} className="pill pill-primary !py-2 !text-[13px]">
-              Enter your Yaadein number
+              Link your parent&apos;s number
             </button>
           )}
         </div>
+
+        {/* Nothing to show until the elder has actually talked. Rather than an
+            empty page, hand the family the one thing they need next: the link
+            that sets up their parent's phone. */}
+        {!people.length && phone && !linking && <HandoffCard phone={phone} />}
 
         {/* at a glance: numbers, moods, topics — before any tab is opened */}
         {pid !== null && <OverviewPanel pid={pid} />}
@@ -189,6 +215,67 @@ export function FamilyPage() {
       </main>
       </RequireFamilySignIn>
     </div>
+  )
+}
+
+/* ── handing the device to the elder ──────────────────────────────
+   The family sets Yaadein up on their own phone, but their parent talks
+   on a different one. Typing a 10-digit number is exactly what someone
+   with memory loss cannot do — so the family sends a link that sets that
+   phone up in one tap, forever. This card is that handoff. */
+
+function HandoffCard({ phone }: { phone: string }) {
+  const [copied, setCopied] = useState(false)
+  const link = `${window.location.origin}/#/try?n=${phone}`
+  const waText = encodeURIComponent(
+    `Maa, ye link kholiye — Yaadein aapse roz baat karegi, aapki hi bhasha mein. Bas ek baar kholna hai:\n${link}`,
+  )
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(link)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2500)
+    } catch {
+      setCopied(false)
+    }
+  }
+
+  return (
+    <section className="border-sr-indigo-700/25 bg-sr-indigo-700/[0.04] mt-6 rounded-2xl border px-6 py-5">
+      <p className="text-sr-indigo-700 font-mono text-[9px] tracking-[0.16em] uppercase">One step left</p>
+      <h2 className="font-season text-tx mt-1.5 text-[21px]">Set up your parent&apos;s phone</h2>
+      <p className="text-tx-secondary mt-2 max-w-[620px] text-[14.5px] leading-relaxed">
+        Send them this link. When they open it once, their phone is set up for good — no number to type, no
+        password, nothing to remember. After that they only ever see one button, and they talk.
+      </p>
+
+      <div className="border-st-secondary mt-4 flex flex-wrap items-center gap-2 rounded-xl border bg-white px-3 py-2">
+        <code className="text-tx-secondary flex-1 overflow-x-auto text-[12px] whitespace-nowrap">{link}</code>
+        <button onClick={() => void copy()} className="pill pill-ghost !py-1.5 !text-[12px]">
+          {copied ? 'Copied ✓' : 'Copy link'}
+        </button>
+        <a
+          href={`https://wa.me/?text=${waText}`}
+          target="_blank"
+          rel="noreferrer"
+          className="pill pill-primary !py-1.5 !text-[12px]"
+        >
+          Send on WhatsApp
+        </a>
+      </div>
+
+      <ol className="text-tx-secondary mt-4 max-w-[620px] space-y-1.5 text-[13.5px] leading-relaxed">
+        <li>1. Send the link to the phone your parent will use (or open it on their phone yourself).</li>
+        <li>2. Ask them to tap the microphone once and allow the mic.</li>
+        <li>3. Yaadein greets them by name and starts talking. Come back here afterwards — this page fills up
+          with what they said.</li>
+      </ol>
+      <p className="text-tx-tertiary mt-3 text-[11.5px]">
+        Anyone with this link can talk to Yaadein as your parent, so send it only to them. Your own dashboard
+        stays behind your sign-in.
+      </p>
+    </section>
   )
 }
 
