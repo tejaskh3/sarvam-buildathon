@@ -1041,9 +1041,13 @@ const server = http.createServer(async (req, res) => {
         if (!who) {
           return json(res, 401, { error: "sign_in_required", message: "Please sign in first." });
         }
-        // an already-claimed household can only be re-registered by its owner
-        if (!db.ownsPhone(who.userId, phone)) {
-          console.warn(`[clerk] ${who.userId} tried to claim ${phone}, owned by someone else`);
+        // A number nobody has registered is free to claim — that's the whole
+        // signup path. Only an EXISTING row owned by someone else is a clash.
+        // (Don't use ownsPhone() here: for the read gate "no such household"
+        // correctly means deny, which is the opposite of what signup needs.)
+        const existing = db.getRegistration(phone);
+        if (existing && existing.owner_id && existing.owner_id !== who.userId) {
+          console.warn(`[clerk] ${who.userId} tried to claim ${phone}, owned by ${existing.owner_id}`);
           return json(res, 403, { error: "already_claimed", message: "This number is already set up by another family. Please check the number." });
         }
         ownerId = who.userId;
