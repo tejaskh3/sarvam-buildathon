@@ -322,7 +322,7 @@ async function chat(history, context, model) {
       reply = kept.length ? kept.join(" ") : "Achha, ye toh badi pyari baat hai. Us waqt aapko kaisa lag raha tha?";
     }
   }
-  return dropDanglingRecall(reply);
+  return stripFillers(dropDanglingRecall(reply));
 }
 
 // Repetition guard. With several instruction layers stacked (theme + reminder
@@ -404,6 +404,35 @@ function dropDanglingRecall(reply) {
   const out = (kept.length ? kept : parts).join("\n\n");
   // also mid-paragraph: "...bataya tha ki... Aaj kya" → drop just the clause
   return out.replace(/(aapne\s+bataya\s+tha\s+ki|आपने\s+बताया\s+था\s+कि)\s*[.…]{2,}\s*/gi, "").trim();
+}
+
+/* Filler openers. On a page "Achha, …" reads as warmth; spoken aloud on every
+   single turn it becomes a tic, and each one spends a second of Bulbul's voice
+   before the question that actually matters. So they come off in code — the
+   prompt asks for warmth and the model keeps reaching for the cheapest kind.
+
+   The separator must include real punctuation, which is the whole trick: it
+   splits the interjection "Bahut achha! Aapne…" from the sentence "Bahut achha
+   lagta tha" — strip on a bare space and that second one becomes "Lagta tha". */
+const FILLER =
+  "(?:arre+|are+|oh+|hmm+|hm+|umm+|wah+|waah+|achha|acha|accha|" +
+  "bahut\\s+(?:achha|achhi|sundar|pyara|pyari|badhiya|khoob)|kya\\s+baat\\s+hai|sach\\s+mein|" +
+  "अच्छा|अरे|ओह|वाह|हम्म|क्या\\s+बात\\s+है|सच\\s+में|" +
+  "बहुत\\s+(?:अच्छा|अच्छी|सुंदर|प्यारा|प्यारी|बढ़िया))";
+// repeatable: "Arre wah! Kya baat hai!" is a pile of interjections, not one
+const FILLER_ONLY = new RegExp(`^(?:(?:${FILLER})[\\s,!?.।…—-]*)+$`, "i");
+const FILLER_LEAD = new RegExp(`^(?:(?:${FILLER})\\s*[,!?.।…—-]+\\s*)+`, "i");
+
+function stripFillers(reply) {
+  const parts = String(reply).split(/(?<=[.?!।])\s+/).map((s) => s.trim()).filter(Boolean);
+  // a whole sentence that is nothing but praise ("Bahut achha!") carries none
+  // of the reply's meaning — but never leave her with nothing to say
+  while (parts.length > 1 && FILLER_ONLY.test(parts[0])) parts.shift();
+  let out = parts.join(" ");
+  const lean = out.replace(FILLER_LEAD, "").trim();
+  if (lean.length >= 12) out = lean; // don't whittle a short reply down to a stump
+  out = out.trim();
+  return out ? out[0].toUpperCase() + out.slice(1) : String(reply).trim();
 }
 
 async function chatOnce(history, context, model) {

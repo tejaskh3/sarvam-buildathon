@@ -202,3 +202,15 @@
 }
 .caption-fade { animation: caption-fade 420ms ease-out both; }
 @media (prefers-reduced-motion: reduce) { .photo-pop, .caption-fade { animation: none; } }
+
+/* Clerk's "Secured by" badge. The sign-in modal hides its whole footer via
+   the appearance API (see Auth.tsx), but the account-management screens behind
+   the avatar menu have their own footer, so this catches those too.
+
+   Structural on purpose: it drops any footer row that is neither the action
+   link ("Sign up", "Manage account") nor a wrapper around it. Matching on
+   Clerk's generated .cl-internal-* class names instead would silently break —
+   and bring the badge back — on their next release. */
+.cl-footer > *:not(.cl-footerAction):not(:has(.cl-footerAction)) {
+  display: none !important;
+}

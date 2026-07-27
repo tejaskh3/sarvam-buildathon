@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Logo } from '../components/Logo'
-import { AccountButton } from '../components/Auth'
+import { AccountButton, SignInMenuItem } from '../components/Auth'
 
 const links = [
   { href: '#personas', label: 'Who this is for' },
@@ -55,8 +55,8 @@ export function Nav() {
           : 'border-b border-transparent'
       }`}
     >
-      <nav className="mx-auto flex w-full max-w-[1180px] items-center justify-between px-5 py-3.5 sm:px-8">
-        <a href="#top" className="flex items-center gap-2.5">
+      <nav className="mx-auto flex w-full max-w-[1180px] items-center justify-between gap-2 px-5 py-3.5 sm:px-8">
+        <a href="#top" className="flex shrink-0 items-center gap-2.5">
           <Logo size={34} />
           <span className="font-season text-tx text-[20px] leading-none">
             Yaadein
@@ -75,14 +75,22 @@ export function Nav() {
           ))}
         </div>
 
-        <div className="flex items-center gap-2">
-          <a href="#/family" className="pill pill-ghost hidden !py-2 !text-[13px] sm:inline-flex">
+        {/* A phone fits the logo, ONE call to action, and the menu — nothing
+            more. Squeezing "Try now" and "Sign in" in alongside wrapped both
+            onto two lines and broke the bar, so below sm the sign-in pill moves
+            into the menu below and only "Try now" stays. whitespace-nowrap is
+            what stops a pill from ever folding its label again. */}
+        <div className="flex shrink-0 items-center gap-2">
+          <a
+            href="#/family"
+            className="pill pill-ghost hidden !py-2 !text-[13px] whitespace-nowrap sm:inline-flex"
+          >
             For families
           </a>
-          <a href="#/try" className="pill pill-primary !py-2 !text-[13px]">
+          <a href="#/try" className="pill pill-primary !py-2 !text-[13px] whitespace-nowrap">
             Try now
           </a>
-          <AccountButton />
+          <AccountButton signInClass="pill pill-ghost hidden !py-2 !text-[13px] whitespace-nowrap sm:inline-flex" />
           <button
             aria-label="Menu"
             aria-expanded={open}
@@ -109,6 +117,15 @@ export function Nav() {
               {l.label}
             </a>
           ))}
+          {/* the two the narrow bar had to give up */}
+          <a
+            href="#/family"
+            onClick={() => setOpen(false)}
+            className="text-tx-secondary block py-2.5 text-[15px] font-medium sm:hidden"
+          >
+            For families
+          </a>
+          <SignInMenuItem className="text-tx-secondary block py-2.5 text-left text-[15px] font-medium sm:hidden" />
         </div>
       )}
     </header>
