@@ -55,7 +55,7 @@ const SYSTEM_PROMPT = `Tum "Yaadein" ho — ek dheeraj-wali, komal aur garam-dil
    (Shaili ka kalpanik udaharan — ismein di gayi jaankari KABHI istemal mat karna: agar kisi ne kaha hota "main gaon mein badi hui", toh achha follow-up hota "Wahan subah kaisi lagti thi?", bura hota "Aapko yaad hai gaon kaunsa tha?")
 5. "Aapne bataya tha ki..." SIRF tab kaho jab woh baat sach mein is baat-cheet mein aayi ho, ya "jaani hui baatein" ki soochi mein ho. Agar aisi koi baat nahi hai, toh ye vaakya bolna sakht MANA hai. Kabhi koi nayi jaankari mat gadho, kabhi anuman ko sach ki tarah mat bolo.
 6. Achhe shuruaati vishay (jab kuch pata na ho): bachpan ka ghar ya gaon, tyohar, khana-peena, school ke din, dost. Shaadi, bachche, ya parivar ke bare mein khud se mat poochho — agar woh khud batayein toh garmjoshi se saath do.
-7. Agar woh kuch bhool jayein ya atak jayein, aaram se aage badh jao — koi hint-game nahi, koi sudhaar nahi.
+7. ISHARA, JAWAB NAHI: agar woh kisi baat par atak jayein ("yaad nahi aa raha...") AUR woh baat "jaani hui baaton" mein hai, toh pehle EK ishara do. Ishara HAMESHA aisa sawaal ho jiska jawab sirf "haan/nahi" ho aur jo us baat ke paas le jaye. (Kalpanik: jaana hua "beta doctor hai", woh bete ka kaam bhoolein → "Kya woh ilaaj ke kaam se juda hai?") SAKHT MANA: "kya tha?", "kaun tha?", "naam batao" — unse kuch YAAD KARWANE ki koshish kabhi nahi. Agar ishare ke baad bhi na aaye, toh agle turn mein garmjoshi se khud sunao ("Koi baat nahi — aapne bataya tha ki...") aur aage badho. Ishara ek hi baar. Agar us baat ka kuch pata nahi, toh bas aaram se aage badh jao — koi sudhaar nahi.
 8. Agar woh koi nayi baat batayein, usi mein dilchaspi lo — apna agenda chhod do.
 9. GEHRAI se KHODO (sabse zaroori niyam): har jawab mein unki abhi kahi baat se EK thos detail pakdo aur usi mein andar jao — us pal ki bhavna, khushboo, swad, awaaz, ya wahan kaun tha. Generic tareef ("bahut achha!") kabhi kaafi nahi — tareef ke baad HAMESHA us detail par ek khodne wala sawaal.
    Udaharan (kalpanik): woh kahein "hum talab ke paas patang udate the" → achha: "talab ke paas! Jab patang kat jaati thi toh kya hota tha?" Bura: "patang udana achha hota hai. Aur kya karte the?"
@@ -167,8 +167,8 @@ async function translate(text, target = "en-IN", source = "hi-IN") {
 // Prompt rules alone leak variants ("yaad aa rahi hai?") — enforce in code.
 const BANNED = /(yaad\s+(hai|hain|karo|kar|aa\s*rah[ia]|aay[ia]|aat[ia]|aaye|dila)|याद\s+(है|हैं|करो|कर|आ\s*रह[ीा]|आय[ीा]|आत[ीा]|आए|दिला))/i;
 
-async function chat(history, context) {
-  let reply = await chatOnce(history, context);
+async function chat(history, context, model) {
+  let reply = await chatOnce(history, context, model);
   if (BANNED.test(reply)) {
     console.warn(`[guard] recall-test phrase blocked: "${reply}"`);
     // targeted rewrite: keep the reply, surgically replace the memory-test part
@@ -191,12 +191,12 @@ async function chat(history, context) {
   return reply;
 }
 
-async function chatOnce(history, context) {
+async function chatOnce(history, context, model) {
   const r = await fetch(`${SARVAM}/v1/chat/completions`, {
     method: "POST",
     headers: { ...HDRS, "content-type": "application/json" },
     body: JSON.stringify({
-      model: CFG.chatModel,
+      model: model || CFG.chatModel,
       temperature: 0.4,
       max_tokens: 160,
       // sarvam-30b is a reasoning model; null disables thinking → fast voice turns
@@ -402,11 +402,23 @@ async function handleTurn(sess, sessionId, transcript, audioFile, delayMs) {
   }
 
   const t1 = Date.now();
+  // Stall → cue (About principle "Retrieve"): she's reaching for something
+  // we know. A static rule wasn't reliable on sarvam-30b (it quizzed or
+  // blurted the answer), so the delicate move gets a surgical one-turn
+  // directive AND the stronger model. Rare turns only — latency is fine.
+  const STALL = /(yaad\s+nahin?|nahin?\s+aa\s+rah[ai]\s+yaad|bhoo?l\s+ga)/i;
+  let turnModel, cueNudge = null;
+  if (sess.context && STALL.test(transcript)) {
+    turnModel = "sarvam-105b";
+    cueNudge = `ABHI is turn mein (sabse zaroori niyam): ${sess.personName} ji kuch yaad nahi kar pa rahe. "Jaani hui baaton" mein woh baat dhoondo. Ek chhota dilasa do, phir us baat se JUDI cheez ka SIRF EK haan/nahi ishara-sawaal — us baat ke asli shabd (pesha/naam/jagah jo bhi woh bhool rahe hain) bole BINA. Jawab IS turn mein batana sakht MANA hai. "kya tha/kaun tha" jaisa sawaal bhi MANA.`;
+  }
   const turnContext = sess.context
-    ? sess.context + (sess.recognitionNudge ? `\n\n${sess.recognitionNudge}` : "")
+    ? sess.context
+      + (sess.recognitionNudge ? `\n\n${sess.recognitionNudge}` : "")
+      + (cueNudge ? `\n\n${cueNudge}` : "")
     : null;
   sess.recognitionNudge = null; // one turn only
-  const reply = await chat(sess.history, turnContext);
+  const reply = await chat(sess.history, turnContext, turnModel);
   const tChat = Date.now() - t1;
   sess.history.push({ role: "assistant", content: reply });
 
