@@ -1,6 +1,6 @@
 """Realtime voice transport for Yaadein.
 
-Pipecat owns WebRTC, streaming Sarvam STT/TTS, VAD, and interruptions.
+Pipecat owns WebSocket audio, streaming Sarvam STT/TTS, VAD, and interruptions.
 The Node app remains the single source of truth for conversation, memory,
 safety, and session behavior.
 """
@@ -45,13 +45,14 @@ from pipecat.processors.audio.audio_buffer_processor import AudioBufferProcessor
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.processors.frameworks.rtvi.observer import RTVIObserver
 from pipecat.processors.frameworks.rtvi.processor import RTVIProcessor
-from pipecat.runner.types import SmallWebRTCRunnerArguments
+from pipecat.runner.types import WebSocketRunnerArguments
 from pipecat.runner.utils import create_transport
+from pipecat.serializers.protobuf import ProtobufFrameSerializer
 from pipecat.services.llm_service import LLMService, LLMSettings
 from pipecat.services.sarvam.stt import SarvamSTTService
 from pipecat.services.sarvam.tts import SarvamTTSService
 from pipecat.services.tts_service import TextAggregationMode
-from pipecat.transports.base_transport import TransportParams
+from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams
 from pipecat.workers.runner import WorkerRunner
 
 
@@ -112,6 +113,29 @@ def _language_code(value: Any) -> str | None:
     code = getattr(value, "value", value)
     code = str(code)
     return code if code in VALID_LANGUAGES else None
+
+
+async def _load_session(session_id: str) -> tuple[str, str]:
+    """Load private session state without putting generated text in the WS URL."""
+
+    async with aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=15)
+    ) as http:
+        async with http.get(
+            f"{NODE_API}/api/realtime/session",
+            headers={"x-session-id": session_id},
+        ) as response:
+            data = await response.json(content_type=None)
+            if response.status >= 400 or data.get("error"):
+                raise RuntimeError(
+                    data.get("message") or data.get("error") or "Session lookup failed"
+                )
+
+    opener = str(data.get("text") or "").strip()
+    language = _language_code(data.get("language")) or DEFAULT_LANGUAGE
+    if not opener:
+        raise RuntimeError("Realtime session has no opener")
+    return opener, language
 
 
 class TranscriptMetadataProcessor(FrameProcessor):
@@ -257,28 +281,29 @@ class YaadeinConversationService(LLMService):
             await self.push_frame(LLMFullResponseEndFrame())
 
 
-async def bot(runner_args: SmallWebRTCRunnerArguments):
-    if not isinstance(runner_args, SmallWebRTCRunnerArguments):
-        raise TypeError("Yaadein realtime currently supports the WebRTC transport only")
+async def bot(runner_args: WebSocketRunnerArguments):
+    if not isinstance(runner_args, WebSocketRunnerArguments):
+        raise TypeError("Yaadein realtime supports the WebSocket transport only")
+    if runner_args.transport_type != "websocket":
+        raise TypeError("Telephony WebSocket connections are not supported here")
     if not SARVAM_KEY:
         raise RuntimeError("SARVAM_API_KEY is missing from app/.env")
 
-    body = runner_args.body if isinstance(runner_args.body, dict) else {}
-    session_id = str(body.get("sessionId") or "").strip()
-    opener = str(body.get("opener") or "").strip()
-    language = _language_code(body.get("language")) or DEFAULT_LANGUAGE
-    if not session_id or not opener:
-        logger.warning("Ignoring a WebRTC offer without Yaadein session data")
+    session_id = str(runner_args.websocket.query_params.get("sessionId") or "").strip()
+    if not session_id:
+        logger.warning("Ignoring a WebSocket connection without a Yaadein session ID")
         return
+    opener, language = await _load_session(session_id)
 
     transport = await create_transport(
         runner_args,
         {
-            "webrtc": lambda: TransportParams(
+            "websocket": lambda: FastAPIWebsocketParams(
                 audio_in_enabled=True,
                 audio_in_sample_rate=16000,
                 audio_out_enabled=True,
                 audio_out_sample_rate=24000,
+                serializer=ProtobufFrameSerializer(),
             )
         },
     )

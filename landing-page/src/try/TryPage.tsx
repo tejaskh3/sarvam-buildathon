@@ -4,7 +4,7 @@ import { TryPageRest } from './TryPageRest'
 /* ------------------------------------------------------------------
    Two ways to hold a conversation, and one rule for choosing.
 
-   TryPageRealtime is the better experience: a continuous Pipecat WebRTC
+   TryPageRealtime is the better experience: a continuous Pipecat WebSocket
    session, so the microphone stays live and an elder can interrupt mid
    sentence. It needs a second service (`npm run realtime`) listening on
    another port.
@@ -19,7 +19,7 @@ import { TryPageRest } from './TryPageRest'
    when a realtime service really is reachable; leave it unset and the site
    keeps the flow that has always worked.
 
-   It is imported lazily because Pipecat's client and WebRTC transport are
+   It is imported lazily because Pipecat's client and WebSocket transport are
    ~400KB. Statically importing them doubled the bundle for every visitor,
    including the ones on a phone in a small town who can never use realtime
    because production has no second service. Now that weight is a separate

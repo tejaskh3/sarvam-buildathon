@@ -1,10 +1,10 @@
 [project]
 name = "yaadein-realtime"
 version = "0.1.0"
-description = "Pipecat WebRTC voice transport for Yaadein"
+description = "Pipecat WebSocket voice transport for Yaadein"
 requires-python = ">=3.12,<3.14"
 dependencies = [
-  "pipecat-ai[runner,sarvam,silero,webrtc]==1.6.0",
+  "pipecat-ai[runner,sarvam,silero,websocket]==1.6.0",
 ]
 
 [tool.uv]

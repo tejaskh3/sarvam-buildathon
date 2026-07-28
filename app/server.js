@@ -896,9 +896,25 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // The WebSocket worker starts only after the browser connects, so it uses
+    // the unguessable Node session ID to retrieve the opener and language.
+    // Keeping those out of the WebSocket URL avoids leaking conversation text
+    // into proxy logs while preserving one source of session truth.
+    if (req.method === "GET" && req.url === "/api/realtime/session") {
+      const id = req.headers["x-session-id"];
+      const sess = sessions.get(id);
+      if (!sess) return json(res, 400, { error: "unknown_session", message: "That conversation has ended." });
+      sess.lastSeen = Date.now();
+      json(res, 200, {
+        text: sess.history.filter((m) => m.role === "assistant").at(-1)?.content || "",
+        language: sess.lang || CFG.ttsLang,
+      });
+      return;
+    }
+
     // Pipecat has already streamed and transcribed this turn. Route its final
     // transcript through the exact same conversation/memory/safety pipeline,
-    // but let Pipecat stream Bulbul audio back over WebRTC.
+    // but let Pipecat stream Bulbul audio back over the realtime transport.
     if (req.method === "POST" && req.url === "/api/realtime/turn") {
       const id = req.headers["x-session-id"];
       const sess = sessions.get(id);

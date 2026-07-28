@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { PipecatClient } from '@pipecat-ai/client-js'
-import { SmallWebRTCTransport } from '@pipecat-ai/small-webrtc-transport'
+import { WebSocketTransport } from '@pipecat-ai/websocket-transport'
 import { type Voice } from '../components/Orb'
 import { clearStoredPhone, getStoredPhone } from '../components/PhoneGate'
 import { API } from '../lib/api'
@@ -8,7 +8,7 @@ import { TryShell } from './TryShell'
 import type { Line } from './types'
 
 /* ------------------------------------------------------------------
-   Try Yaadein — a continuous Pipecat WebRTC voice session.
+   Try Yaadein — a continuous Pipecat WebSocket voice session.
    The microphone stays live between turns, so speech can naturally
    interrupt the agent and no audio has to be recorded/uploaded first.
    ------------------------------------------------------------------ */
@@ -50,7 +50,6 @@ export function TryPageRealtime() {
   const levelRef = useRef(0)
   const sessionRef = useRef<string | null>(null)
   const clientRef = useRef<PipecatClient | null>(null)
-  const botAudioRef = useRef<HTMLAudioElement | null>(null)
   const sessionStartRef = useRef<{
     sessionId: string
     text: string
@@ -86,26 +85,12 @@ export function TryPageRealtime() {
     ])
   }, [])
 
-  /* The first tap connects a continuous WebRTC session. Later taps only
+  /* The first tap connects a continuous WebSocket session. Later taps only
      mute/unmute it; speaking naturally while Yaadein talks is barge-in. */
   const toggle = useCallback(async () => {
     if (!phoneRef.current) return void gateRef.current(true) // need the number first
     const connected = clientRef.current
     if (connected?.connected) {
-      // Some browsers require one more user gesture before allowing WebRTC
-      // audio playback. If that happened, use this tap to unlock the speaker
-      // without unexpectedly muting the microphone.
-      const botAudio = botAudioRef.current
-      if (botAudio?.srcObject && botAudio.paused) {
-        try {
-          await botAudio.play()
-          setError(null)
-          return
-        } catch {
-          setError('Your browser is blocking speaker playback. Allow sound for this site and tap again.')
-          return
-        }
-      }
       const enable = !connected.isMicEnabled
       await connected.enableMic(enable)
       levelRef.current = 0
@@ -144,7 +129,10 @@ export function TryPageRealtime() {
 
       const start = sessionStartRef.current
       if (!start) throw new Error('Could not start the conversation')
-      const transport = new SmallWebRTCTransport()
+      const transport = new WebSocketTransport({
+        recorderSampleRate: 16000,
+        playerSampleRate: 24000,
+      })
       client = new PipecatClient({
         transport,
         enableMic: true,
@@ -154,7 +142,6 @@ export function TryPageRealtime() {
           onDisconnected: () => {
             levelRef.current = 0
             clientRef.current = null
-            if (botAudioRef.current) botAudioRef.current.srcObject = null
             setState('idle')
           },
           onError: (message) => {
@@ -168,20 +155,6 @@ export function TryPageRealtime() {
           onRemoteAudioLevel: (level) => {
             if (voiceRef.current === 'speaking') levelRef.current = Math.min(level * 2.5, 1)
           },
-          onTrackStarted: (track, participant) => {
-            // SmallWebRTCTransport exposes the bot track but does not render it.
-            // The React Pipecat package normally supplies an audio player; this
-            // page uses client-js directly, so attach the remote track here.
-            if (track.kind !== 'audio' || participant?.local) return
-            const botAudio = botAudioRef.current
-            if (!botAudio) return
-            botAudio.srcObject = new MediaStream([track])
-            botAudio.muted = false
-            botAudio.volume = 1
-            void botAudio.play().catch(() => {
-              setError('Your browser is blocking speaker playback. Allow sound for this site and tap the microphone again.')
-            })
-          },
           onUserStartedSpeaking: () => setState('listening'),
           onUserStoppedSpeaking: () => setState('idle', true),
           onBotStartedSpeaking: () => setState('speaking'),
@@ -194,19 +167,13 @@ export function TryPageRealtime() {
       })
       clientRef.current = client
       await client.initDevices()
-      // Register the custom Yaadein payload with Pipecat Runner first. The
-      // returned session ID then drives its session-scoped WebRTC offer route.
-      await client.startBotAndConnect({
-        endpoint: `${REALTIME}/start`,
-        requestData: {
-          transport: 'webrtc',
-          body: {
-            sessionId: start.sessionId,
-            opener: start.text,
-            language: start.language,
-          },
-        },
-      })
+      const wsUrl = new URL('/ws-client', REALTIME)
+      if (wsUrl.protocol === 'http:') wsUrl.protocol = 'ws:'
+      if (wsUrl.protocol === 'https:') wsUrl.protocol = 'wss:'
+      // The random session ID is enough for the worker to retrieve the opener
+      // and language privately from Node; conversation text never enters URLs.
+      wsUrl.searchParams.set('sessionId', start.sessionId)
+      await client.connect({ wsUrl: wsUrl.toString() })
     } catch (e) {
       if (client) await client.disconnect().catch(() => {})
       clientRef.current = null
@@ -235,7 +202,6 @@ export function TryPageRealtime() {
       const client = clientRef.current
       clientRef.current = null
       if (client) void client.disconnect()
-      if (botAudioRef.current) botAudioRef.current.srcObject = null
     },
     [],
   )
@@ -277,10 +243,6 @@ export function TryPageRealtime() {
           ? '— are both local services running? (npm start and npm run realtime)'
           : undefined
       }
-    >
-      {/* SmallWebRTCTransport exposes the bot track but does not render it, so
-          the remote audio needs a real element to attach to. */}
-      <audio ref={botAudioRef} autoPlay playsInline className="hidden" />
-    </TryShell>
+    />
   )
 }

@@ -20,7 +20,7 @@ flowchart LR
   Node --> DB[("SQLite<br/>node:sqlite")]
   Client["Pipecat TypeScript client<br/>lazy-loaded in the browser"] -.-> RT
   RT["Pipecat Python sidecar<br/>realtime/bot.py<br/>local opt-in"] -.->|"final transcript"| Node
-  Elder -.->|"WebRTC, opt-in"| Client
+  Elder -.->|"WebSocket audio, opt-in"| Client
   RT -.-> Sarvam
   Sarvam["Sarvam AI"]
 ```
@@ -52,7 +52,7 @@ app/          the whole backend, zero npm dependencies
   email.js      Resend receipts (seat confirmed, app announcement)
   prompts.js    the product's voice: system prompt, CST themes, orientation
   voice.js      pure text guards — repetition, dangling recall, fillers
-realtime/     Pipecat server pipeline (Python, optional, local only)
+realtime/     Pipecat WebSocket server pipeline (Python, independently deployable)
 landing-page/ React + Vite site, including the Pipecat TypeScript client
   src/try/        the elder's screen — one orb, nothing else
   src/family/     the caregiver dashboard, one module per panel
@@ -78,7 +78,7 @@ cd landing-page && npm install && npm run dev
 
 Then open `http://localhost:3000/#/try`.
 
-**Realtime voice** is opt-in and local-only. Start the sidecar with `npm run realtime`, then set `VITE_REALTIME_URL=http://localhost:7860` in `landing-page/.env.local`. Leaving it unset — which is what any deploy does — keeps the record-then-upload loop that needs nothing but the Node server. The browser integration is already TypeScript; Pipecat's supported server runtime remains Python. See [the realtime deployment guide](docs/10-realtime-deployment.md) before enabling it in production.
+**Realtime voice** is opt-in. Start the sidecar with `npm run realtime`, then set `VITE_REALTIME_URL=http://localhost:7860` in `landing-page/.env.local`. Leaving it unset keeps the record-then-upload fallback. In production the Node app and Pipecat worker run as two Railway services: TypeScript streams browser audio over WebSockets and the Python pipeline calls Node over Railway's private network. See [the realtime deployment guide](docs/10-realtime-deployment.md).
 
 ## Tests
 

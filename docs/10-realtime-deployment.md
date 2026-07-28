@@ -1,34 +1,45 @@
-# Realtime voice deployment
+# Self-hosted realtime voice on Railway
 
-## What is JavaScript/TypeScript, and what is Python?
+## Architecture
 
-The browser side is already the official Pipecat TypeScript stack:
+Yaadein uses the official Pipecat stack on both sides:
 
-- `@pipecat-ai/client-js`
-- `@pipecat-ai/small-webrtc-transport`
-- `landing-page/src/try/TryPageRealtime.tsx`
+- Browser: TypeScript `@pipecat-ai/client-js` and
+  `@pipecat-ai/websocket-transport`
+- Realtime worker: Python Pipecat, Silero VAD, and Sarvam streaming STT/TTS
+- Product backend: Node, SQLite, prompts, memory, and safety
 
-It handles microphone devices, WebRTC signaling, bot events, audio levels,
-interruptions, and speaker playback.
+```mermaid
+flowchart LR
+  Browser["Browser\nPipecat TypeScript client"] -->|"wss:// protobuf audio"| Voice["Railway realtime service\nPython Pipecat worker"]
+  Browser -->|"HTTPS"| Web["Railway web service\nNode + frontend + SQLite"]
+  Voice -->|"private HTTP\nfinal transcript"| Web
+  Voice --> Sarvam["Sarvam STT/TTS"]
+  Web --> Sarvam
+```
 
-Pipecat's supported server runtime is Python. `realtime/bot.py` owns the live
-audio pipeline: Silero VAD, Sarvam streaming STT/TTS, turn boundaries, and
-interruption cancellation. It sends each final transcript to
-`app/server.js`, so memory, safety, prompts, and session state still have one
-source of truth.
+The browser sends microphone PCM and receives bot PCM over one WebSocket.
+Pipecat still owns turn detection, interruptions, STT, and TTS. Only the
+transport changed from direct SmallWebRTC to WebSockets.
 
-Rewriting the server in TypeScript would mean replacing Pipecat's server
-runtime, not merely changing SDK syntax. That would make the system harder to
-maintain and lose the framework behavior we chose Pipecat for.
+This fits Railway because its public edge supports WebSockets. It does not
+require public inbound UDP, TURN, Pipecat Cloud, or Daily.
+
+## Why TypeScript does not replace the Python worker
+
+Pipecat's TypeScript SDK is the browser client. It manages microphone devices,
+speaker playback, connection state, audio levels, and RTVI messages.
+
+Pipecat's supported agent pipeline is Python. Rewriting the worker in
+TypeScript would mean replacing Pipecat's VAD, interruption, frame, STT, and
+TTS pipeline rather than changing SDK syntax.
 
 ## Local test
 
-```bash
-# Terminal 1: Node API and built frontend
-npm start
+Create `app/.env`:
 
-# Terminal 2: Pipecat server
-npm run realtime
+```dotenv
+SARVAM_API_KEY=...
 ```
 
 Create `landing-page/.env.local`:
@@ -37,100 +48,90 @@ Create `landing-page/.env.local`:
 VITE_REALTIME_URL=http://localhost:7860
 ```
 
-If Vite is being used, restart it after changing the variable. Open
-`http://localhost:3000/#/try` for the built site or the Vite URL for local
-frontend development.
-
-## Recommended production shape
-
-```mermaid
-flowchart LR
-  Browser["Browser\nPipecat TypeScript client"] --> Web["Railway\nNode app + frontend"]
-  Browser <-->|"WebRTC"| Voice["Pipecat Cloud, Daily,\nor UDP-capable host"]
-  Voice -->|"final transcript over HTTPS"| Web
-  Web --> Sarvam["Sarvam APIs"]
-  Voice --> Sarvam
-```
-
-### Recommended: Railway + managed realtime
-
-Keep the Node app, frontend, SQLite volume, and product APIs on Railway. Put
-the realtime Pipecat worker on Pipecat Cloud or use Pipecat's Daily transport.
-Those services handle the public WebRTC media edge; the bot calls the Railway
-API over HTTPS.
-
-This requires a production transport/start-session adapter because the
-current runner is intentionally SmallWebRTC-only. Do not set
-`VITE_REALTIME_URL` in production until that adapter is deployed and its public
-start endpoint is known. With the variable unset, the existing REST voice loop
-continues to work.
-
-### Self-hosted option: Railway + a UDP-capable container host
-
-`realtime/Dockerfile` packages the current SmallWebRTC worker. Run it on a host
-that exposes WebRTC UDP, such as a VM or a UDP-capable container platform.
-
-Build it locally with:
+Build after changing a Vite variable:
 
 ```bash
-docker build -t yaadein-realtime ./realtime
-docker run --rm -p 7860:7860 \
-  -e SARVAM_API_KEY \
-  -e YAADEIN_API_BASE=https://your-node-service.up.railway.app \
-  yaadein-realtime
+npm run build
 ```
 
-Then set this build variable on the Railway web service and rebuild:
+Run the two processes:
+
+```bash
+# Terminal 1
+npm start
+
+# Terminal 2
+npm run realtime
+```
+
+Open `http://localhost:3000/#/try`.
+
+## Railway project
+
+Create two services from the same GitHub repository and the same environment.
+
+### Service 1: `yaadein-web`
+
+- Root directory: `/`
+- Build command: `npm run build`
+- Start command: `npm start`
+- Public domain: enabled
+- Persistent volume: mounted at the existing app data path
+
+Keep the existing product variables, including `SARVAM_API_KEY`.
+
+After the realtime service has a public domain, add this build variable and
+redeploy the web service:
 
 ```dotenv
-VITE_REALTIME_URL=https://your-realtime-domain.example
+VITE_REALTIME_URL=https://${{yaadein-realtime.RAILWAY_PUBLIC_DOMAIN}}
 ```
 
-### Why not host direct SmallWebRTC on Railway?
+`VITE_REALTIME_URL` is compiled into the browser bundle, so changing it always
+requires a rebuild.
 
-Railway is suitable for the signaling HTTP endpoint and supports multiple
-services, private networking, WebSockets, domains, Dockerfiles, and health
-checks. Its public edge exposes HTTP/HTTPS and TCP, but not inbound UDP.
-SmallWebRTC media therefore cannot reliably reach a Railway container directly.
+### Service 2: `yaadein-realtime`
 
-An external TURN service over TCP/TLS can relay media, but both the browser and
-server ICE configuration must be wired to it and the relay adds cost and
-latency. For this product, a managed WebRTC transport or a UDP-capable worker
-host is the cleaner production choice.
+- Root directory: `/realtime`
+- Config file path: `/realtime/railway.json`
+- Builder: `realtime/Dockerfile`
+- Public domain: enabled
+- No volume required
 
-## Environment variables
-
-### Railway web service
+Variables:
 
 ```dotenv
-SARVAM_API_KEY=...
-VITE_REALTIME_URL=https://public-realtime-endpoint.example
+SARVAM_API_KEY=${{yaadein-web.SARVAM_API_KEY}}
+YAADEIN_API_BASE=http://yaadein-web.railway.internal:${{yaadein-web.PORT}}
 ```
 
-`VITE_REALTIME_URL` is compiled into the browser bundle, so changing it requires
-a frontend rebuild.
+Use `http`, not `https`, for Railway private networking. The browser must use
+the realtime service's public domain; only the worker-to-Node request uses the
+private domain.
 
-### Realtime worker
+## Session flow
 
-```dotenv
-SARVAM_API_KEY=...
-YAADEIN_API_BASE=https://your-node-service.up.railway.app
-PORT=7860
-```
+1. The browser asks Node to create a Yaadein session.
+2. Node returns an unguessable session ID and the caption shown on screen.
+3. The TypeScript client connects to `/ws-client?sessionId=...`.
+4. The Python worker retrieves the opener and language from Node over private
+   networking.
+5. The worker speaks the opener and streams turns over the WebSocket.
+6. Final transcripts go through the existing Node memory and safety pipeline.
 
-The realtime worker must use the public Railway URL when it runs outside the
-Railway project. A browser can never use `*.railway.internal`.
+Only the random session ID enters the WebSocket URL. Generated conversation
+text and API keys do not enter URLs or browser-visible configuration.
 
-## Railway service checklist
+## Operational tradeoffs
 
-For the existing Node service:
+WebSockets make Railway self-hosting simple and remove Pipecat Cloud hosting
+charges. Railway compute and Sarvam usage still apply.
 
-1. Keep the repository root as the service root.
-2. Build with `npm run build`.
-3. Start with `npm start`.
-4. Mount the persistent volume at the current app data path.
-5. Generate a public domain and keep the existing health/attack checks.
-6. Add `VITE_REALTIME_URL` only after the realtime endpoint is live.
+Compared with WebRTC, WebSocket audio runs over TCP. On lossy mobile networks,
+packet retransmission can add jitter or latency. Browser microphone echo
+cancellation and noise suppression still apply, but WebRTC's media-specific
+congestion handling is not present. Test on the actual mobile network before
+making realtime the only production voice path.
 
-Do not deploy the realtime Dockerfile as a plain public SmallWebRTC Railway
-service unless an external TURN configuration has been added and tested.
+The REST voice implementation remains the automatic fallback whenever
+`VITE_REALTIME_URL` is unset.

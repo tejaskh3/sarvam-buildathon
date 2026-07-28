@@ -12,7 +12,7 @@
   "dependencies": {
     "@clerk/clerk-react": "^5.61.9",
     "@pipecat-ai/client-js": "^1.13.0",
-    "@pipecat-ai/small-webrtc-transport": "^1.10.6",
+    "@pipecat-ai/websocket-transport": "^1.7.1",
     "@types/three": "^0.185.1",
     "qrcode": "^1.5.4",
     "react": "^19.2.7",

@@ -16,4 +16,4 @@ ENV PATH="/app/.venv/bin:$PATH"
 
 EXPOSE 7860
 
-CMD ["sh", "-c", "exec python bot.py -t webrtc --host 0.0.0.0 --port \"${PORT:-7860}\""]
+CMD ["sh", "-c", "exec python bot.py -t websocket --host 0.0.0.0 --port \"${PORT:-7860}\""]

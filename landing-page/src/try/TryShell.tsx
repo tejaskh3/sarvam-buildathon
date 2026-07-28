@@ -9,7 +9,7 @@ import type { Line } from './types'
    Everything the elder sees, for either transport.
 
    The two voice pages differ entirely in HOW they move audio — one records
-   and uploads, the other holds a WebRTC session open — and not at all in what
+   and uploads, the other holds a realtime session open — and not at all in what
    they draw. They used to carry a byte-identical copy of this markup, some
    170 lines each, which is how a fix to one silently skipped the other.
 

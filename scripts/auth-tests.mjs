@@ -94,6 +94,20 @@ const elder = await fetch(`${API}/api/session/start`, {
   method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ phone: NEW }),
 });
 ok("the ELDER can talk with no sign-in at all", elder.status === 200, `got ${elder.status}`);
+const elderSession = await elder.json();
+const realtimeSession = await fetch(`${API}/api/realtime/session`, {
+  headers: { "x-session-id": elderSession.sessionId },
+});
+const realtimeBody = await realtimeSession.json();
+ok(
+  "the realtime worker can retrieve only its session opener",
+  realtimeSession.status === 200 && !!realtimeBody.text && !!realtimeBody.language,
+  `got ${realtimeSession.status}: ${JSON.stringify(realtimeBody).slice(0, 100)}`,
+);
+const unknownRealtime = await fetch(`${API}/api/realtime/session`, {
+  headers: { "x-session-id": "not-a-real-session" },
+});
+ok("an unknown realtime session is refused", unknownRealtime.status === 400, `got ${unknownRealtime.status}`);
 
 console.log(`\n${fail === 0 ? "🎉" : "🔧"} ${pass} passed, ${fail} failed\n`);
 srv.kill(); jwks.close();
