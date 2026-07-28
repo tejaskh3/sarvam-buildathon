@@ -549,6 +549,14 @@ module.exports = {
     return { already_existed: false, owner_id: owner_id || null };
   },
 
+  /* Remove the household row itself. Only the scenario simulator needs this:
+     resetPhone() clears an elder's data but deliberately leaves the
+     registration, so a scenario that must begin from "this number has never
+     been registered" cannot be set up without it. */
+  deleteRegistration(phone) {
+    return db.prepare("DELETE FROM registrations WHERE phone = ?").run(String(phone)).changes > 0;
+  },
+
   // Which households has this signed-in family member claimed? The dashboard
   // shows only these, so one family can never read another's memories.
   householdsFor(ownerId) {

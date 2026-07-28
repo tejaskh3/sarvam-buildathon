@@ -17,6 +17,36 @@ import { LangSelect } from './LangSelect'
 export const TEST_PHONE = '1234567890'
 const KEY = 'yaadein-phone'
 
+/* Open a private demo household.
+   Everyone used to be dropped onto TEST_PHONE, and because a person is keyed
+   by their phone number server-side, that meant one shared identity: whoever
+   first gave a name on that line was the name every later visitor was greeted
+   by, and their stored memories were recited back to strangers. So each
+   visitor now gets their own throwaway household, and the name she gives is
+   hers alone.
+
+   Falls back to the shared number if the call fails — a visitor who cannot
+   reach the server should still get to try the demo, and the shared line is
+   no worse than what everyone had before. */
+export async function claimDemoPhone(api: string): Promise<string> {
+  try {
+    const r = await fetch(`${api}/api/demo/claim`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    })
+    const j = await r.json()
+    if (r.ok && /^\d{10}$/.test(j.phone || '')) {
+      localStorage.setItem(KEY, j.phone)
+      return j.phone
+    }
+  } catch {
+    /* offline, or the route is not deployed yet */
+  }
+  localStorage.setItem(KEY, TEST_PHONE)
+  return TEST_PHONE
+}
+
 export function getStoredPhone(): string | null {
   const p = localStorage.getItem(KEY)
   return p && /^\d{10}$/.test(p) ? p : null
@@ -127,16 +157,18 @@ export function PhoneGate({
               simply knows you.
             </p>
             <button
-              onClick={() => {
-                localStorage.setItem(KEY, TEST_PHONE)
-                onDone(TEST_PHONE)
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true)
+                onDone(await claimDemoPhone(api))
               }}
-              className="pill pill-primary mt-5 w-full justify-center !py-3 !text-[15px]"
+              className="pill pill-primary mt-5 w-full justify-center !py-3 !text-[15px] disabled:opacity-40"
             >
-              Try a conversation now
+              {busy ? 'Opening…' : 'Try a conversation now'}
             </button>
             <p className="text-tx-tertiary mt-3 text-[12.5px] leading-relaxed">
-              This uses a shared demo — anything said here is not private to your family.
+              This opens a private demo on this device. It is not linked to your family&apos;s
+              account, and nobody else can hear it.
             </p>
             <a href="#/family" className="text-sr-indigo-700 mt-4 block text-[13px] underline">
               I&apos;m the family — set this up properly

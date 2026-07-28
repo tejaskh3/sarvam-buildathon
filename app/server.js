@@ -14,8 +14,10 @@ const dodo = require("./dodo");
 const checkin = require("./checkin");
 const email = require("./email");
 const {
-  similarity, openQuestionAbout, dedupeParagraphs, dropDanglingRecall, stripFillers,
+  similarity, openQuestionAbout, dedupeParagraphs, dropDanglingRecall, stripFillers, BANNED,
+  hasQuestion, keepTheFloor, repeatsPrevious,
 } = require("./voice");
+const sim = require("./sim");
 const { SYSTEM_PROMPT, THEMES, nowInIndia, orientationLine } = require("./prompts");
 
 // ─── env ──────────────────────────────────────────────────────────
@@ -62,6 +64,24 @@ const ALLOWED_PHONES = new Set(
 const phoneOk = (p) =>
   typeof p === "string" && /^\d{10}$/.test(p) && (ALLOWED_PHONES.has(p) || db.isRegistered(p));
 const isAdmin = (p) => typeof p === "string" && ALLOWED_PHONES.has(p);
+
+/* A real shared secret, for the routes where "knows a phone number" is not
+   good enough. ADMIN_TOKEN is compared in constant time and never logged.
+   Unset means the routes that need it refuse to run at all rather than
+   falling open — the failure mode of a dev tool must not be "available to
+   everyone in production". */
+function adminOk(req) {
+  const want = String(process.env.ADMIN_TOKEN || "");
+  if (!want) return false;
+  const got = String(
+    req.headers["x-admin-token"] ||
+    (new URL(req.url, "http://x").searchParams.get("token") || "")
+  );
+  if (got.length !== want.length) return false;
+  try {
+    return crypto.timingSafeEqual(Buffer.from(got), Buffer.from(want));
+  } catch { return false; }
+}
 
 
 
@@ -225,17 +245,51 @@ async function stt(wavBuffer) {
 const BULBUL_LANGS = new Set(["hi-IN", "bn-IN", "en-IN", "gu-IN", "kn-IN", "ml-IN", "mr-IN", "od-IN", "pa-IN", "ta-IN", "te-IN"]);
 const LANG_NAME = { "hi-IN": "Hindi", "mr-IN": "Marathi", "bn-IN": "Bengali", "ta-IN": "Tamil", "te-IN": "Telugu", "kn-IN": "Kannada", "gu-IN": "Gujarati", "ml-IN": "Malayalam", "pa-IN": "Punjabi", "od-IN": "Odia", "en-IN": "English" };
 
-async function translate(text, target = "en-IN", source = "hi-IN") {
-  // shield the brand name — Translate mangles it ("Yaadein" → "यातु")
-  const shielded = text.replace(/yaadein|यादें/gi, "«YDN»");
+/* One call to Sarvam Translate. */
+async function translateRaw(text, target, source) {
   const r = await fetch(`${SARVAM}/translate`, {
     method: "POST",
     headers: { ...HDRS, "content-type": "application/json" },
-    body: JSON.stringify({ input: shielded, source_language_code: source, target_language_code: target }),
+    body: JSON.stringify({ input: text, source_language_code: source, target_language_code: target }),
   });
   if (!r.ok) throw new Error(`translate ${r.status}: ${await r.text()}`);
-  const out = (await r.json()).translated_text;
-  return out.replace(/«\s*YDN\s*»|«YDN»|YDN/g, brandIn(target));
+  return (await r.json()).translated_text;
+}
+
+/* The brand name has to be kept away from Translate, which otherwise renders
+   it as a word: "Yaadein" came back as "யாதேயின் குரல்" in Tamil and "यादीचा
+   आवाज" ("the voice of the list") in Marathi.
+ *
+ * Every placeholder tried here made things worse rather than better, and each
+ * failure is why this function now works the way it does:
+ *
+ *   «YDN»    Tamil dropped the guillemets and returned a bare YDN; Marathi
+ *            transliterated the lot to वायडीएन, which no recovery regex
+ *            matched — so the elder was introduced to "½DN".
+ *   __YDN__  survived all three languages in isolation, then in a real opener
+ *            the underscores read as a fill-in-the-blank and the model
+ *            COMPLETED it: "நான் ___________ உங்கள் நட்பு neighborhood data
+ *            scientist, உங்கள் data problems-க்கு உதவி செய்ய இங்கே இருக்கிறேன்."
+ *            A dementia companion introduced itself to a Tamil grandmother as
+ *            a friendly neighbourhood data scientist.
+ *
+ * So there is no placeholder. The text is split ON the brand name, the pieces
+ * are translated, and the name is put back untouched — nothing is handed to
+ * the model that it could mangle, transliterate or fill in. It costs one extra
+ * call per occurrence, once per session, which is the cheapest part of an
+ * opener that already runs a chat and a TTS render.
+ */
+const BRAND_RE = /yaadein|यादें/gi;
+
+async function translate(text, target = "en-IN", source = "hi-IN") {
+  const src = String(text);
+  if (!BRAND_RE.test(src)) return translateRaw(src, target, source);
+
+  const parts = src.split(BRAND_RE);
+  const translated = await Promise.all(
+    parts.map((p) => (p.trim() ? translateRaw(p, target, source) : Promise.resolve(p))),
+  );
+  return translated.join(` ${brandIn(target)} `).replace(/\s{2,}/g, " ").trim();
 }
 
 /* Her name, written in the script the sentence is in. यादें belongs in Hindi and
@@ -247,9 +301,8 @@ function brandIn(lang) {
   return lang === "hi-IN" || lang === "mr-IN" ? "यादें" : "Yaadein";
 }
 
-// C6/C4 guard: recall-testing phrases must never reach her voice.
-// Prompt rules alone leak variants ("yaad aa rahi hai?") — enforce in code.
-const BANNED = /(yaad\s+(hai|hain|karo|kar|aa\s*rah[ia]|aay[ia]|aat[ia]|aaye|dila)|याद\s+(है|हैं|करो|कर|आ\s*रह[ीा]|आय[ीा]|आत[ीा]|आए|दिला))/i;
+// BANNED (the recall-test guard) now lives in voice.js with the other pure
+// text rules, so sim.js can check scripted replies against the same regex.
 
 async function chat(history, context, model) {
   let reply = await chatOnce(history, context, model);
@@ -275,12 +328,27 @@ async function chat(history, context, model) {
   return stripFillers(dropDanglingRecall(reply));
 }
 
-async function chatNoEcho(history, context, model) {
+/* The last-resort turns below are written in Hinglish, because everything in
+   prompts.js is. Dropped into a Tamil conversation unchanged, they produced a
+   reply the elder could not read — "Khane-peene ki baat karein, ya gaane ki?"
+   answering a Tamil sentence, on the scenario built to prove the eleven-
+   language claim. So anything we compose in code, rather than get from the
+   model, goes through Translate before she hears it. Failure degrades to the
+   Hinglish rather than to nothing at all. */
+async function localise(text, lang) {
+  if (!text || !lang || lang === "hi-IN" || lang === "en-IN") return text;
+  return translate(text, lang, "hi-IN").catch((e) => {
+    console.warn(`[localise] kept Hinglish for ${lang}: ${e.message}`);
+    return text;
+  });
+}
+
+async function chatNoEcho(history, context, model, lang) {
   const prevAgent = history.filter((m) => m.role === "assistant").at(-1)?.content || "";
   let reply = await chat(history, context, model);
   // also collapse an in-reply duplicate paragraph before comparing
   reply = dedupeParagraphs(reply);
-  if (prevAgent && similarity(reply, prevAgent) >= 0.7) {
+  if (repeatsPrevious(reply, prevAgent)) {
     console.warn(`[echo] regenerating — reply repeated the last one`);
     const retry = await chat(
       history,
@@ -289,7 +357,8 @@ async function chatNoEcho(history, context, model) {
       model
     );
     const better = dedupeParagraphs(retry);
-    if (similarity(better, prevAgent) < similarity(reply, prevAgent)) reply = better;
+    if (!repeatsPrevious(better, prevAgent)) reply = better;
+    else if (similarity(better, prevAgent) < similarity(reply, prevAgent)) reply = better;
 
     /* If the retry is no better we used to ship the echo anyway — and that is
        how the demo number came to answer two different things with the same
@@ -297,11 +366,28 @@ async function chatNoEcho(history, context, model) {
        a duplicate. Rather than say the same thing twice to someone with memory
        loss, drop to a question that cannot repeat: it is built from THEIR last
        words, so it differs whenever the conversation does. */
-    if (similarity(reply, prevAgent) >= 0.7) {
+    if (repeatsPrevious(reply, prevAgent)) {
       const theirs = history.filter((m) => m.role === "user").at(-1)?.content || "";
       console.warn(`[echo] regeneration failed too — falling back to an open question`);
-      reply = openQuestionAbout(theirs);
+      /* The turn index matters: without it the fallback returns the same
+         proposal every time, and two consecutive fallbacks repeat — the exact
+         failure this branch exists to prevent. */
+      reply = await localise(
+        openQuestionAbout(theirs, history.filter((m) => m.role === "assistant").length),
+        lang,
+      );
     }
+  }
+  /* A turn with nothing to answer is where the conversation dies. Recorded in
+     a scenario run: three of six replies were "Aaj baat karte hain." or
+     "Theek hai. Aaj baat karte hain." — no question, no proposal, nothing for
+     her to do, so she stops talking and the session ends. The guards above
+     all police what she is told; this one makes sure she is asked something. */
+  if (!hasQuestion(reply)) {
+    const theirs = history.filter((m) => m.role === "user").at(-1)?.content || "";
+    const turnIndex = history.filter((m) => m.role === "assistant").length;
+    console.warn(`[floor] reply had no question — keeping the floor open: "${reply.slice(0, 60)}"`);
+    reply = `${reply} ${await localise(keepTheFloor(theirs, turnIndex), lang)}`.trim();
   }
   return reply;
 }
@@ -401,6 +487,13 @@ async function ensureAcks() {
   }
   console.log(`[acks] ${ACKS.length} ready`);
 }
+
+/* Told apart on purpose: a missing token is a setup problem the operator can
+   fix, a wrong one is someone who should not be here. */
+const simDenied = () =>
+  process.env.ADMIN_TOKEN
+    ? { error: "bad_token", message: "x-admin-token did not match ADMIN_TOKEN." }
+    : { error: "admin_token_unset", message: "Set ADMIN_TOKEN in the environment to enable the scenario simulator." };
 
 // ─── http helpers ─────────────────────────────────────────────────
 /* CORS: the landing page (vite dev :5173 / a separately hosted static site)
@@ -639,7 +732,7 @@ const themeLine = sess.theme && !cueNudge && sess.contract.ENGAGED.turns <= 5
       + remLine
     : null;
   sess.recognitionNudge = null; // one turn only
-  let reply = await chatNoEcho(sess.history, turnContext, turnModel);
+  let reply = await chatNoEcho(sess.history, turnContext, turnModel, sess.lang);
   // A cue must not contain the answer. The model both prefaces hints with
   // "Aapne bataya tha ki <the fact>" AND sometimes just states the fact
   // outright, so prompt rules aren't enough: compare the hint against what
@@ -650,7 +743,8 @@ const themeLine = sess.theme && !cueNudge && sess.contract.ENGAGED.turns <= 5
     const retry = await chatNoEcho(
       sess.history,
       turnContext + `\n\nPICHHLA PRAYAS GALAT THA: usme "aapne bataya tha" keh kar jawab khol diya gaya. Ab sirf dilasa + EK haan/nahi ishara-sawaal do. "bataya tha" ye shabd bolna MANA hai.`,
-      "sarvam-105b"
+      "sarvam-105b",
+      sess.lang
     );
     const stillLeaks = /(bataya\s+tha|बताया\s+था)/i.test(retry) || restatesAKnownFact(sess.personId, retry);
     if (!stillLeaks) reply = retry;
@@ -664,6 +758,35 @@ const themeLine = sess.theme && !cueNudge && sess.contract.ENGAGED.turns <= 5
       reply = kept.length ? kept.join(" ") : "Koi baat nahi. Aaram se sochiye — koi jaldi nahi hai.";
     }
   }
+  /* A fabricated memory, attributed to her.
+     Caught by a scenario run on a first-ever conversation with an empty store:
+     "Aapne bataya tha ki shaam ko ghar mein chai ki khushboo aati thi." She had
+     said "Haan ji, namaste" and nothing else. Rule 5 forbids this in the
+     clearest terms in the prompt, and the model did it anyway on turn one.
+
+     This is the worst thing the product can do. Everything else on this list
+     is a bad conversation; this hands someone who cannot check a memory that
+     is not theirs, in the voice of the companion they trust to hold their
+     memories. So it is enforced in code, like the recall-test guard: with
+     nothing stored and nothing yet said, the phrase cannot be true, so the
+     sentence carrying it is dropped. */
+  if (/(bataya\s+tha|बताया\s+था)/i.test(reply)) {
+    const stored = sess.personId ? db.memoriesFor(sess.personId).length : 0;
+    const saidSoFar = sess.history.filter((m) => m.role === "user").length;
+    if (!stored && saidSoFar <= 1) {
+      const kept = reply
+        .split(/(?<=[.?!।])\s+/)
+        .filter((s) => !/(bataya\s+tha|बताया\s+था)/i.test(s));
+      console.warn(`[fabricated] dropped an invented memory: "${reply.slice(0, 90)}"`);
+      reply = kept.length
+        ? kept.join(" ")
+        : await localise(openQuestionAbout(transcript, sess.contract.ENGAGED.turns), sess.lang);
+      if (!hasQuestion(reply)) {
+        reply = `${reply} ${await localise(keepTheFloor(transcript, sess.contract.ENGAGED.turns), sess.lang)}`.trim();
+      }
+    }
+  }
+
   const tChat = Date.now() - t1;
   sess.history.push({ role: "assistant", content: reply });
 
@@ -722,6 +845,210 @@ const themeLine = sess.theme && !cueNudge && sess.contract.ENGAGED.turns <= 5
   return { reply, audio, tChat, tTts };
 }
 
+/* ── the scenario simulator ────────────────────────────────────────
+   Seeds a household into a known state, plays a fixed script of elder
+   utterances, and lints every reply. See app/sim.js for the scenarios and
+   the checks; this function is only the orchestration.
+
+   It talks to itself over HTTP on purpose. Calling handleTurn() directly
+   would be faster and would also be a second implementation of the turn
+   pipeline — the session gate, the JSON shapes, the language plumbing. The
+   whole value of a simulator is that it exercises what the browser
+   exercises, so it uses the same two routes the browser uses.
+
+   The STALL regex is duplicated from handleTurn deliberately: there it
+   decides which model runs, here it decides which replies get checked for a
+   leaked answer, and those are different jobs on the same signal. */
+const SIM_STALL = /(yaad\s+nahin?|nahin?\s+aa\s+rah[ai]\s+yaad|bhoo?l\s+ga)/i;
+const SIM_MAX_TURNS = 12;
+
+async function runScenario(opts = {}) {
+  const key = String(opts.scenario || "");
+  const def = sim.SCENARIOS[key];
+  if (key && !def) {
+    return { error: "unknown_scenario", known: Object.keys(sim.SCENARIOS) };
+  }
+  const script = Array.isArray(opts.turns) && opts.turns.length ? opts.turns : def && def.turns;
+  if (!script) return { error: "nothing_to_say", message: "Pass a scenario key or a turns array." };
+  if (script.length > SIM_MAX_TURNS) {
+    return { error: "too_many_turns", message: `At most ${SIM_MAX_TURNS} turns per run.` };
+  }
+
+  const register = opts.register !== undefined ? opts.register : def && def.register;
+  const seed = opts.seed !== undefined ? opts.seed : def && def.seed;
+  const expect = { ...(def && def.expect), ...(opts.expect || {}) };
+  const wantAudio = opts.tts === true; // text-only unless asked: TTS is the cost
+
+  /* A scenario must never be able to touch a real household. Sim numbers
+     start with 5, which no Indian mobile does; the team's own allowlisted
+     numbers are permitted so a scenario can be run against the real demo
+     line when that is genuinely what you want. */
+  const phone = String(opts.phone || (def && def.phone) || "");
+  if (!sim.isSimPhone(phone) && !isAdmin(phone)) {
+    return {
+      error: "unsafe_phone",
+      message: `Sim numbers must start with ${sim.SIM_PREFIX} (10 digits) so a reset can never wipe a real family.`,
+    };
+  }
+
+  const warnings = [];
+  const t0 = Date.now();
+
+  // ── set the household up ──
+  if (opts.reset !== false) {
+    db.resetPhone(phone);
+    db.deleteRegistration(phone);
+  }
+  /* Registered even when the scenario is "nobody has registered this number":
+     phoneOk() is what lets the elder's device talk at all, and a row with no
+     elder_name reproduces the state we actually want — the server finds a
+     household but no name, so it falls back to asking by voice. */
+  db.register({
+    phone,
+    elder_name: (register && register.elder_name) || "",
+    language: (register && register.language) || null,
+    family_name: "Scenario runner",
+    source: "sim",
+    verified: 1,
+    owner_id: null,
+  });
+
+  let seededFacts = [];
+  if (seed) {
+    const { person } = db.findOrCreatePerson(seed.person || "Kamala", phone);
+    if (seed.lang) db.setPersonLang(person.id, seed.lang);
+    if (seed.memories && seed.memories.length) {
+      db.saveMemories(
+        person.id,
+        `sim:${key || "adhoc"}`,
+        seed.memories.map((m) => ({
+          emotional_tone: "positive", provenance: "USER_STATED", ...m,
+        })),
+        null,
+      );
+      seededFacts = db.memoriesFor(person.id);
+    }
+    if (seed.open_loop) db.setOpenLoop(person.id, seed.open_loop);
+    if (seed.reminder) db.addReminder(person.id, seed.reminder.text, seed.reminder.time_of_day || null);
+  }
+
+  // ── play the script through the real routes ──
+  const base = `http://127.0.0.1:${PORT}`;
+  const post = async (path, body, headers = {}) => {
+    const r = await fetch(`${base}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify(body),
+    });
+    return { status: r.status, json: await r.json().catch(() => ({})) };
+  };
+
+  const tOpen = Date.now();
+  const opened = await post("/api/session/start", { phone, tts: wantAudio });
+  if (opened.status !== 200 || !opened.json.sessionId) {
+    return { error: "session_failed", status: opened.status, body: opened.json };
+  }
+  const sessionId = opened.json.sessionId;
+  const expectLang = expect.lang || (register && register.language) || (seed && seed.lang) || null;
+  const knowsName = !!opened.json.person;
+
+  const turns = [{
+    who: "yaadein",
+    text: opened.json.text,
+    ms: Date.now() - tOpen,
+    opener: true,
+    flags: sim.lintReply({
+      reply: opened.json.text,
+      expectLang,
+      hasMemories: seededFacts.length > 0,
+      turnIndex: 0,
+      /* The opener is the ONE turn where asking the name is correct, so the
+         check is suppressed here and only here. */
+      knowsName: false,
+    }),
+  }];
+
+  let prevReply = opened.json.text;
+  let turnIndex = 0;
+  /* Everything she has said so far, so the invented-detail check can tell a
+     name she gave us from one the model reached for. Seeded with her own name
+     and the seeded facts: those came from the family at signup, so greeting her
+     by name is not the model inventing a person. */
+  let saidSoFar = [
+    (register && register.elder_name) || "",
+    (seed && seed.person) || "",
+    seededFacts.map((f) => `${f.statement} ${f.canonical || ""}`).join(" "),
+  ].join(" ");
+  for (const said of script) {
+    turnIndex++;
+    saidSoFar += ` ${said}`;
+    const tTurn = Date.now();
+    const r = await post("/api/turn-text", { text: said, tts: wantAudio }, { "x-session-id": sessionId });
+    const ms = Date.now() - tTurn;
+    if (r.status !== 200) {
+      turns.push({ who: "elder", text: said });
+      turns.push({ who: "yaadein", text: "", ms, error: r.json, flags: [{ code: "turn_failed", level: "fail", detail: `HTTP ${r.status}: ${JSON.stringify(r.json).slice(0, 160)}` }] });
+      break;
+    }
+    const reply = r.json.text || "";
+    turns.push({ who: "elder", text: said });
+    turns.push({
+      who: "yaadein",
+      text: reply,
+      ms,
+      flags: sim.lintReply({
+        reply,
+        prevReply,
+        elderSaid: saidSoFar,
+        expectLang,
+        knownFacts: seededFacts,
+        afterStall: SIM_STALL.test(said),
+        hasMemories: seededFacts.length > 0,
+        knowsName: knowsName || !!r.json.person,
+        turnIndex,
+      }),
+    });
+    prevReply = reply;
+  }
+
+  // ── what the conversation left behind ──
+  const sess = sessions.get(sessionId);
+  const person = db.findPersonByPhone(phone);
+  const captured = person ? db.inspectMemories(person.id) : [];
+  const seededIds = new Set(seededFacts.map((m) => m.id));
+
+  if (expect.reminderOnce) {
+    const said = turns.filter((t) => t.who === "yaadein" && new RegExp(expect.reminderOnce, "i").test(t.text || "")).length;
+    if (said === 0) warnings.push(`the family's reminder ("${expect.reminderOnce}") was never mentioned`);
+    if (said > 1) warnings.push(`the family's reminder was repeated ${said} times — it must arrive once`);
+  }
+  if (expect.resumed && sess && !sess.contract.RESUMED) {
+    warnings.push("contract RESUMED is false — a returning elder was not recognised");
+  }
+
+  const agentTurns = turns.filter((t) => t.who === "yaadein");
+  return {
+    scenario: key || "ad-hoc",
+    title: def ? def.title : null,
+    hunts: def ? def.hunts : null,
+    phone,
+    person: person ? person.name : null,
+    language: { expected: expectLang, opener_fit: sim.scriptFit(opened.json.text, expectLang) },
+    theme: opened.json.theme || null,
+    ...sim.summarise(agentTurns),
+    warnings,
+    latency_ms: { total: Date.now() - t0, per_turn: agentTurns.map((t) => t.ms) },
+    contract: sess ? sess.contract : null,
+    memories: {
+      seeded: seededFacts.length,
+      captured: captured.filter((m) => !seededIds.has(m.id)).map((m) => ({
+        statement: m.statement, canonical: m.canonical, category: m.category, provenance: m.provenance,
+      })),
+    },
+    transcript: turns,
+  };
+}
+
 // ─── server ───────────────────────────────────────────────────────
 const server = http.createServer(async (req, res) => {
   try {
@@ -765,10 +1092,16 @@ const server = http.createServer(async (req, res) => {
       const id = crypto.randomUUID();
       let phone = null;
       let realtime = false;
+      /* The scenario simulator plays hundreds of turns and reads only text, so
+         it opts out of synthesis: a Bulbul render per turn is the single
+         biggest cost of running a script, and nothing looks at the bytes. The
+         browser never sends this, so the default has to stay "speak". */
+      let wantAudio = true;
       try {
         const body = JSON.parse((await readBody(req)).toString() || "{}");
         phone = String(body.phone || "").trim();
         realtime = body.realtime === true;
+        wantAudio = body.tts !== false;
       } catch { /* no body */ }
       if (!phoneOk(phone)) {
         return json(res, 403, { error: "phone_not_allowed" });
@@ -866,6 +1199,15 @@ const server = http.createServer(async (req, res) => {
       openerInstruction = openerInstruction.replace(/\)$/, "") + ` ${orientationLine()})`;
 
       let opener = await chat([{ role: "user", content: openerInstruction }], sess.context);
+      /* The opener goes through chat(), not chatNoEcho(), so it never had the
+         no-dead-end guard the ordinary turns got — and a dead-end opener is the
+         worst place for one: she is handed the floor with nothing to answer on
+         the very first thing she hears. Appended BEFORE the translate below, so
+         a non-Hindi elder gets the whole greeting in one language. */
+      if (!hasQuestion(opener)) {
+        console.warn(`[floor] opener had no question: "${opener.slice(0, 60)}"`);
+        opener = `${opener} ${keepTheFloor("", 0)}`.trim();
+      }
       // language memory: the model won't reliably open in Marathi/Tamil/etc.
       // from an empty history, so the opener goes through Sarvam Translate.
       // Mid-conversation it mirrors her language naturally via STT codemix.
@@ -877,7 +1219,7 @@ const server = http.createServer(async (req, res) => {
       sessions.set(id, sess);
       // Pipecat speaks the opener over its streaming TTS connection. The
       // existing REST caller still receives the complete WAV as before.
-      const audio = realtime ? null : await tts(opener, sess.lang);
+      const audio = realtime || !wantAudio ? null : await tts(opener, sess.lang);
       json(res, 200, {
         sessionId: id, text: opener, audio, person: sess.personName,
         language: realtime ? (sess.lang || CFG.ttsLang) : undefined,
@@ -992,9 +1334,11 @@ const server = http.createServer(async (req, res) => {
       const sess = sessions.get(id);
       if (!sess) return json(res, 400, { error: "unknown_session", message: "That conversation has ended." });
       sess.lastSeen = Date.now();
-      const { text } = JSON.parse((await readBody(req)).toString());
+      const body = JSON.parse((await readBody(req)).toString());
+      const { text } = body;
       const delayMs = parseInt(req.headers["x-delay-ms"], 10);
-      const out = await handleTurn(sess, id, text, null, Number.isFinite(delayMs) ? delayMs : null);
+      const out = await handleTurn(sess, id, text, null, Number.isFinite(delayMs) ? delayMs : null,
+        { synthesizeAudio: body.tts !== false }); // see /api/session/start
       json(res, 200, { transcript: text, text: out.reply, audio: out.audio, person: sess.personName, contract: sess.contract });
       return;
     }
@@ -1075,6 +1419,50 @@ const server = http.createServer(async (req, res) => {
       });
       console.log(`[register] ${phone}${already_existed ? " (returning)" : ""} elder=${body.elder_name || "?"} lang=${body.language || "?"} verified=${verified}`);
       json(res, 200, { ok: true, phone, already_existed, verified: !!verified });
+      return;
+    }
+
+    /* ── a private demo household, one per visitor ──
+       Everybody who tapped "Try a conversation now" was put on the single
+       shared number 1234567890, and people are keyed by phone: name_key IS
+       the phone (db.js), so the FIRST person ever to give a name on that
+       line owns it forever. Every visitor after them was greeted by that
+       name — "Namaste Tejas ji" to a stranger — and, far worse, was read
+       that person's stored memories back: "Aapne bataya tha ki aapka beta
+       doctor hai." An elder's memories, recited to whoever opened the demo
+       next.
+
+       So a visitor gets their own number instead. The 4 prefix is reserved
+       for this the way 5 is reserved for the simulator: no Indian mobile
+       begins with either, so a demo household can never collide with a real
+       one. Nothing is shared, the name she gives is hers, and the "she
+       remembers me" moment now happens on the visitor's own thread. */
+    if (req.method === "POST" && req.url === "/api/demo/claim") {
+      const ip = (req.headers["x-forwarded-for"] || "").split(",")[0].trim() || req.socket.remoteAddress || "?";
+      if (!registerAllowed(ip)) {
+        return json(res, 429, { error: "too_many", message: "Too many demo sessions from here. Please try again later." });
+      }
+      let body = {};
+      try { body = JSON.parse((await readBody(req)).toString() || "{}"); } catch { /* empty */ }
+
+      let phone = null;
+      for (let i = 0; i < 12 && !phone; i++) {
+        const cand = `4${crypto.randomInt(100_000_000, 1_000_000_000)}`;
+        if (!db.getRegistration(cand)) phone = cand;
+      }
+      if (!phone) return json(res, 503, { error: "no_demo_line", message: "Could not open a demo just now — please try again." });
+
+      db.register({
+        phone,
+        elder_name: String(body.elder_name || "").trim().slice(0, 60),
+        language: /^[a-z]{2}-IN$/.test(body.language || "") ? body.language : null,
+        family_name: "",
+        source: "demo",
+        verified: 0,
+        owner_id: null,
+      });
+      console.log(`[demo] opened a private demo household on ${phone}`);
+      json(res, 200, { phone, demo: true });
       return;
     }
 
@@ -1424,6 +1812,32 @@ const server = http.createServer(async (req, res) => {
       const { phone } = JSON.parse((await readBody(req)).toString() || "{}");
       if (!phoneOk(phone)) return json(res, 403, { error: "phone_not_allowed" });
       json(res, 200, { ok: db.resetPhone(phone) });
+      return;
+    }
+
+    /* ── the scenario simulator ──
+       Token-gated, not phone-gated: this route seeds households, resets them
+       and spends Sarvam credits, so "knows a number we print on the site" is
+       nowhere near enough. With ADMIN_TOKEN unset it refuses outright. */
+    if (req.method === "GET" && req.url.split("?")[0] === "/api/sim/scenarios") {
+      if (!adminOk(req)) return json(res, 403, simDenied());
+      json(res, 200, {
+        sim_prefix: sim.SIM_PREFIX,
+        max_turns: SIM_MAX_TURNS,
+        scenarios: Object.entries(sim.SCENARIOS).map(([key, s]) => ({
+          key, title: s.title, hunts: s.hunts, phone: s.phone,
+          language: (s.register && s.register.language) || "hi-IN",
+          seeded: !!s.seed, turns: s.turns.length,
+        })),
+      });
+      return;
+    }
+    if (req.method === "POST" && req.url.split("?")[0] === "/api/sim") {
+      if (!adminOk(req)) return json(res, 403, simDenied());
+      let body = {};
+      try { body = JSON.parse((await readBody(req)).toString() || "{}"); } catch { /* empty */ }
+      const out = await runScenario(body);
+      json(res, out.error ? 400 : 200, out);
       return;
     }
 

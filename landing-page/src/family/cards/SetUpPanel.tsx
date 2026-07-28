@@ -161,9 +161,9 @@ export function SetUpPanel({ onDone }: { onDone: (phone: string) => void }) {
           Or just hear it talk first
         </p>
         <p className="text-tx-secondary mt-1 text-[13.5px] leading-relaxed text-pretty">
-          There&apos;s a shared demo line you can use right now, with nothing to set
-          up. Anything said on it is public to other visitors, so keep your own
-          family&apos;s stories for a real number.
+          Talking to Yaadein opens a private demo on your device — nobody else hears
+          it. The dashboard below is a prepared example household, so there is
+          something to look at before your parent has said a word.
         </p>
         <div className="mt-4 flex flex-wrap gap-2">
           <a href="#/try" className="pill pill-ghost !py-2.5 !text-[14px]">
