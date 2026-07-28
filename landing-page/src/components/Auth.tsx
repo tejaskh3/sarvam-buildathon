@@ -75,6 +75,17 @@ const CLERK_LOOK = {
       '&:hover': { borderColor: '#1e2033', backgroundColor: '#f5f5f3' },
     },
     socialButtonsBlockButtonText: { fontSize: '14.5px', fontWeight: '500' },
+    /* Clerk tags whichever provider you used last with a "Last used" pill. It's
+       there to help you choose between several; Google is the only way in, so it
+       labels a decision nobody is making. Hidden here rather than in MODAL_OPTS
+       so it stays gone on every sign-in surface.
+
+       The key is a real element descriptor — it appears in Clerk's own
+       descriptor registry in clerk.browser 5.127.1, next to the socialButtons*
+       entries. Don't lean on the compiler to catch a typo here: `elements` is
+       typed as an open record, so a misspelled key type-checks and silently
+       does nothing. */
+    lastAuthenticationStrategyBadge: { display: 'none' },
     modalCloseButton: { color: '#6b7092', boxShadow: 'none' },
     // dim and blur behind, matching the phone-number dialog
     modalBackdrop: { backgroundColor: 'rgba(30, 32, 51, 0.45)', backdropFilter: 'blur(4px)' },

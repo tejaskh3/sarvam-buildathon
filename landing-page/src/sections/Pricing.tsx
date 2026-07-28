@@ -93,16 +93,37 @@ const COPY: Record<
       'White-label family reports',
       'Your psychologist stops hand-writing progress notes',
     ],
-    foot: 'One to two percent of what a seat already costs you.',
-    cta: 'Talk to us',
+    foot: 'One to two percent of what a seat already costs you. Start with one resident and add seats as you go.',
+    /* Was "Talk to us", which pointed at a WhatsApp number we never set — and
+       then fell through to the family waitlist. The button now does what it
+       says: it starts a centre subscription. */
+    cta: 'Set up your centre',
     accent: false,
   },
 }
 
 const ORDER = ['founding', 'family', 'centre']
 
+/* Dodo's hosted checkout honours ?quantity= but renders it read-only — there is
+   no stepper on their page. So the seat count has to be decided here, before we
+   hand the centre over, or every home would be billed for exactly one resident.
+   Parsed rather than concatenated because the link already carries `quantity=1`
+   from the env var and may carry `metadata_phone` too. */
+const SEAT_CAP = 200
+function withSeats(url: string | null | undefined, n: number): string | null {
+  if (!url) return null
+  try {
+    const u = new URL(url)
+    u.searchParams.set('quantity', String(n))
+    return u.toString()
+  } catch {
+    return url
+  }
+}
+
 export function Pricing() {
   const [data, setData] = useState<PlansResponse | null>(null)
+  const [seats, setSeats] = useState(10)
 
   useEffect(() => {
     const phone = getStoredPhone()
@@ -116,12 +137,6 @@ export function Pricing() {
 
   const wl = data?.waitlist ?? FALLBACK
   const byKey = new Map((data?.plans ?? []).map((p) => [p.key, p]))
-  const whatsapp = data?.contact_whatsapp
-    ? `https://wa.me/${data.contact_whatsapp}?text=${encodeURIComponent(
-        'Hello — I run a day-care centre and would like to know about Yaadein for our members.',
-      )}`
-    : null
-
   return (
     <Section id="pricing" tone="sf">
       <SectionHead
@@ -138,10 +153,15 @@ export function Pricing() {
           const isCentre = key === 'centre'
           const isFamily = key === 'family'
 
-          /* No tier is ever disabled now. There is nothing to charge, so the
-             seat itself is the call to action; the Dodo link, once it exists,
-             is offered underneath as a way to pay early. */
-          const href = isCentre ? whatsapp ?? '#/waitlist' : '#/waitlist'
+          /* No tier is ever disabled now. For families there is nothing to
+             charge, so the seat itself is the call to action and the Dodo link
+             sits underneath as a way to pay early.
+
+             Centres are the other way round: the seat form is the *families*
+             waitlist, so sending a care home there offered them the wrong
+             product entirely. Their checkout is the primary action — until we
+             have a contact channel, it is the only route they have to us. */
+          const href = (isCentre ? withSeats(plan?.checkout_url, seats) : null) ?? '#/waitlist'
           const payNow = isFamily ? plan?.checkout_url ?? null : null
 
           return (
@@ -211,6 +231,35 @@ export function Pricing() {
                   </li>
                 ))}
               </ul>
+
+              {/* The seat count travels in the checkout URL, so it has to be
+                  chosen before they leave. ₹600 is tax-inclusive on the Dodo
+                  product, which is why this multiplies straight up to the total
+                  they will actually be shown. */}
+              {isCentre && plan?.checkout_url && (
+                <div className="border-st-secondary mb-3 flex items-center justify-between gap-3 rounded-[12px] border px-3.5 py-2.5">
+                  <label htmlFor="centre-seats" className="text-tx-secondary text-[13px]">
+                    Residents
+                  </label>
+                  <div className="flex items-center gap-2.5">
+                    <input
+                      id="centre-seats"
+                      type="number"
+                      min={1}
+                      max={SEAT_CAP}
+                      value={seats}
+                      onChange={(e) => {
+                        const n = Math.round(Number(e.target.value))
+                        setSeats(Number.isFinite(n) ? Math.min(SEAT_CAP, Math.max(1, n)) : 1)
+                      }}
+                      className="border-st-secondary text-tx focus:border-tx w-16 rounded-[9px] border bg-white px-2 py-1 text-center text-[13px] tabular-nums outline-none transition-colors"
+                    />
+                    <span className="text-tx text-[13px] font-medium tabular-nums">
+                      ₹{((plan?.price ?? 600) * seats).toLocaleString('en-IN')}/mo
+                    </span>
+                  </div>
+                </div>
+              )}
 
               <a
                 href={href}

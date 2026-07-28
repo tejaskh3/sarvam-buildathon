@@ -8,3 +8,10 @@ app/.env
 .env.*.local
 *.log
 .DS_Store
+
+# Runtime state, not source. The database holds real conversations and the audio
+# folders hold recorded voices — neither belongs in a repo we share or make
+# public. The ack clips are re-rendered by ensureAcks() on boot, so nothing here
+# is lost by not tracking it. Railway keeps this on a persistent volume and
+# .railwayignore already excludes it from deploys.
+app/data/
