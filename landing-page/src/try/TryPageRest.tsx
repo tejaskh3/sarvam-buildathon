@@ -57,8 +57,6 @@ export function TryPageRest() {
      the gap until their first word is how hard the question was */
   const agentDoneAtRef = useRef<number | null>(null)
   const audioCtxRef = useRef<AudioContext | null>(null)
-  /* dead-air kill: preloaded "achha…" clips, played the moment a turn is sent */
-  const acksRef = useRef<AudioBuffer[]>([])
   /* barge-in: the currently playing reply, stoppable mid-word */
   const playingRef = useRef<{ src: AudioBufferSourceNode; interrupted: boolean } | null>(null)
 
@@ -73,17 +71,6 @@ export function TryPageRest() {
     const ctx = audioCtxRef.current!
     const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
     return ctx.decodeAudioData(bytes.buffer.slice(0))
-  }, [])
-
-  /* a short acknowledgment, no state change — covers the thinking gap */
-  const playAck = useCallback(() => {
-    const ctx = audioCtxRef.current
-    const acks = acksRef.current
-    if (!ctx || !acks.length) return
-    const src = ctx.createBufferSource()
-    src.buffer = acks[Math.floor(Math.random() * acks.length)]
-    src.connect(ctx.destination)
-    src.start()
   }, [])
 
   const play = useCallback(async (b64: string) => {
@@ -127,11 +114,19 @@ export function TryPageRest() {
     levelRef.current = 0
     const wav = encodeWavPcm(rec.chunks, 16000)
     if (!rec.hasVoice || wav.size < 8000) {
-      setState('idle') // nothing was said — no ack, no STT call
+      setState('idle') // nothing was said — no STT call
       return
     }
+    /* The pause here is silent on purpose.
+       There used to be a bank of pre-rendered clips — "achha…", "haan haan…",
+       "theek hai" — fired the instant she stopped speaking, to cover the
+       second or two of thinking. It solved dead air and bought a verbal tic:
+       the same five sounds answering literally every turn, before Yaadein had
+       heard a word of what was said. An acknowledgement that cannot have been
+       earned stops reading as listening and starts reading as a machine
+       beeping back. The wait is now carried by "One moment" under the orb,
+       which says the same thing without pretending to have understood. */
     setState('idle', true)
-    playAck() // she hears "achha…" instantly — never dead air while we think
     try {
       const r = await fetch(`${API}/api/turn`, {
         method: 'POST',
@@ -177,7 +172,7 @@ export function TryPageRest() {
       setError(elderError(e))
       setState('idle')
     }
-  }, [play, playAck])
+  }, [play])
 
   const ensureMic = useCallback(async () => {
     if (audioCtxRef.current) return
@@ -212,18 +207,6 @@ export function TryPageRest() {
     src.connect(proc)
     proc.connect(ctx.destination)
     audioCtxRef.current = ctx
-    /* preload ack clips once the AudioContext exists */
-    fetch(`${API}/api/acks`)
-      .then((r) => r.json())
-      .then(async (j) => {
-        const bufs: AudioBuffer[] = []
-        for (const b64 of j.acks || []) {
-          const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
-          bufs.push(await ctx.decodeAudioData(bytes.buffer.slice(0)))
-        }
-        acksRef.current = bufs
-      })
-      .catch(() => { /* acks are progressive enhancement */ })
   }, [finishRecording])
 
   /* the one control: start talking, or stop and send.

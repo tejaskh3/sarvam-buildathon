@@ -104,14 +104,14 @@ function dropDanglingRecall(reply) {
    missing: bare agreement ("Haan haan,", "Theek hai.") reads as listening
    in text and as a verbal tic when it opens three turns in a row. */
 const FILLER =
-  "(?:arre+|are+|oh+|hmm+|hm+|umm+|wah+|waah+|achha|acha|accha|" +
+  "(?:arre+|are+|oh+|hmm+|hm+|umm+|wah+|waah+|aha+|aah+a|achha|acha|accha|" +
   "bahut\\s+(?:achha|achhi|sundar|pyara|pyari|badhiya|khoob|khoobsurat|sahi)|" +
   "kya\\s+baat\\s+hai|kya\\s+khoob|sach\\s+mein|" +
   // bare agreement and praise, from the monosyllabic and codemix runs
   "haan(?:\\s+haan)*|haa+n|ji\\s+haan|haan\\s+ji|" +
   "theek\\s+hai|thik\\s+hai|sahi\\s+hai|bilkul|" +
   "kitna\\s+(?:sundar|pyara|pyari|achha|achhi|khoobsurat|badhiya)|" +
-  "अच्छा|अरे|ओह|वाह|हम्म|क्या\\s+बात\\s+है|सच\\s+में|" +
+  "अच्छा|अरे|ओह|वाह|हम्म|आहा|क्या\\s+बात\\s+है|सच\\s+में|" +
   "हाँ(?:\\s+हाँ)*|हां|जी\\s+हाँ|हाँ\\s+जी|ठीक\\s+है|बिल्कुल|" +
   "कितना\\s+(?:सुंदर|प्यारा|प्यारी|अच्छा|अच्छी)|" +
   "बहुत\\s+(?:अच्छा|अच्छी|सुंदर|प्यारा|प्यारी|बढ़िया|खूब)|" +

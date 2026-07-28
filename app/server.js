@@ -491,31 +491,16 @@ async function tts(text, lang) {
   return j.audios[0]; // base64 wav
 }
 
-// ─── ack bank: kills dead air (A3) ─────────────────────────────────
-// Pre-rendered acknowledgments, generated once at boot, served to the
-// browser, played the instant a turn is sent — never >300ms of silence.
-const ACK_TEXTS = ["अच्छा...", "हम्म...", "हाँ हाँ...", "अच्छा, समझी...", "हाँ, बताइए..."];
-const ACK_DIR = path.join(db.DATA_DIR, "acks");
-let ACKS = []; // base64 wavs
-
-async function ensureAcks() {
-  fs.mkdirSync(ACK_DIR, { recursive: true });
-  for (let i = 0; i < ACK_TEXTS.length; i++) {
-    const f = path.join(ACK_DIR, `ack-${i}.wav`);
-    if (!fs.existsSync(f)) {
-      try {
-        const b64 = await tts(ACK_TEXTS[i]);
-        fs.writeFileSync(f, Buffer.from(b64, "base64"));
-        console.log(`[acks] rendered "${ACK_TEXTS[i]}"`);
-      } catch (e) {
-        console.warn(`[acks] failed for "${ACK_TEXTS[i]}": ${e.message}`);
-        continue;
-      }
-    }
-    ACKS.push(fs.readFileSync(f).toString("base64"));
-  }
-  console.log(`[acks] ${ACKS.length} ready`);
-}
+// ─── the ack bank, and why there isn't one ─────────────────────────
+// Five clips — "अच्छा...", "हम्म...", "हाँ हाँ..." — used to be rendered at
+// boot and played the instant a turn was sent, so no thinking pause ever ran
+// past 300ms of silence (A3). Removed: the same five sounds answering every
+// turn, chosen before a single word had been transcribed, is a tic rather
+// than a response. It also let Yaadein appear to agree with something she had
+// not heard yet, which is exactly the kind of unearned confidence the rest of
+// this file is built to prevent. The thinking pause is now silent and labelled
+// on screen. Filler openers in the model's own replies are still stripped in
+// voice.js — the tic came back through that door too.
 
 /* Told apart on purpose: a missing token is a setup problem the operator can
    fix, a wrong one is someone who should not be here. */
@@ -1381,12 +1366,6 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // ack clips for the browser to preload (dead-air kill)
-    if (req.method === "GET" && req.url === "/api/acks") {
-      json(res, 200, { acks: ACKS });
-      return;
-    }
-
     // instant popup feedback: is this number on the list?
     const vp = req.url.match(/^\/api\/verify-phone\?n=(\d+)$/);
     if (req.method === "GET" && vp) {
@@ -2203,7 +2182,6 @@ server.listen(PORT, () => {
     `   🔐 ${ADMIN_PHONES.size} admin number(s)${process.env.ADMIN_PHONES ? "" : " (from ALLOWED_PHONES, minus the public demo line)"}` +
     `   ${db.waitlistCount() > 0 && !process.env.ADMIN_PHONES ? "— set ADMIN_PHONES to a number that is not in the repo" : ""}\n`
   );
-  ensureAcks().catch((e) => console.warn("[acks] init failed:", e.message));
 
   /* Watch for silence. Ten minutes is fine granularity for cadences measured in
      hours, and the sweep is idempotent — last_alert_at does the deduping, so a

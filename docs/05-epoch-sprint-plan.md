@@ -200,11 +200,11 @@ The **family** signs in; the **elder never does**. Clerk's React SDK holds the s
 **GET `/api/auth-config`** → `{ "auth": "clerk" | "none", "sign_in_required": true }`
 **POST `/api/register`** — when Clerk is on, requires a valid session; the account becomes the household's `owner_id`. `401 sign_in_required` · `403 already_claimed` if another account owns that number.
 **Gated when Clerk is on:** everything under `/api/people`, `/api/memories`, `/api/reminders`, `/api/scribe`, `/api/digest` → `401 sign_in_required` or `403 not_your_household`.
-**Never gated:** `/api/session/start`, `/api/turn`, `/api/turn-text`, `/api/acks`, `/api/stats`, `/api/verify-phone` — an elder with dementia cannot log in, and must never be asked to. Verified by test.
+**Never gated:** `/api/session/start`, `/api/turn`, `/api/turn-text`, `/api/stats`, `/api/verify-phone` — an elder with dementia cannot log in, and must never be asked to. Verified by test.
 Env: `CLERK_PUBLISHABLE_KEY` (server) + `VITE_CLERK_PUBLISHABLE_KEY` (build). Unset ⇒ behaves exactly as before.
 
 ### 3.7 Existing (unchanged — UI already uses)
-`POST /api/turn` (wav, headers `x-session-id`, `x-delay-ms`) · `POST /api/turn-text` · `GET /api/people?phone=` · `GET /api/people/:id/memories|briefing|memoir|photos|signals` · `POST /api/people/:id/photos` · `POST /api/memories/:id/policy|resolve` · `GET /api/digest?phone=` · `POST /api/debug/reset` · `GET /api/acks` · `POST /api/narrate`.
+`POST /api/turn` (wav, headers `x-session-id`, `x-delay-ms`) · `POST /api/turn-text` · `GET /api/people?phone=` · `GET /api/people/:id/memories|briefing|memoir|photos|signals` · `POST /api/people/:id/photos` · `POST /api/memories/:id/policy|resolve` · `GET /api/digest?phone=` · `POST /api/debug/reset` · `POST /api/narrate`.
 
 ---
 
