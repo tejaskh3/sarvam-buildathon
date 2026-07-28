@@ -236,6 +236,9 @@ class YaadeinConversationService(LLMService):
                     "text": reply,
                     "person": data.get("person"),
                     "contract": data.get("contract"),
+                    # A photo can arrive on any turn now, not just the opener.
+                    # The Node side decides when; this only has to not drop it.
+                    "photo": data.get("photo"),
                 }
             )
             await self.push_frame(

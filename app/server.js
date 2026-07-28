@@ -315,8 +315,8 @@ function brandIn(lang) {
 // BANNED (the recall-test guard) now lives in voice.js with the other pure
 // text rules, so sim.js can check scripted replies against the same regex.
 
-async function chat(history, context, model) {
-  let reply = await chatOnce(history, context, model);
+async function chat(history, context, model, trailing) {
+  let reply = await chatOnce(history, context, model, trailing);
   if (BANNED.test(reply)) {
     console.warn(`[guard] recall-test phrase blocked: "${reply}"`);
     // targeted rewrite: keep the reply, surgically replace the memory-test part
@@ -354,9 +354,9 @@ async function localise(text, lang) {
   });
 }
 
-async function chatNoEcho(history, context, model, lang) {
+async function chatNoEcho(history, context, model, lang, trailing) {
   const prevAgent = history.filter((m) => m.role === "assistant").at(-1)?.content || "";
-  let reply = await chat(history, context, model);
+  let reply = await chat(history, context, model, trailing);
   // also collapse an in-reply duplicate paragraph before comparing
   reply = dedupeParagraphs(reply);
   if (repeatsPrevious(reply, prevAgent)) {
@@ -365,7 +365,8 @@ async function chatNoEcho(history, context, model, lang) {
       history,
       (context || "") +
         `\n\nSAKHT NIYAM: pichhla jawab tha — "${prevAgent}". Ab bilkul NAYA vaakya aur NAYA sawaal do. Wahi baat ya wahi sawaal dobara bolna MANA hai. Unki aakhri baat se koi NAYI cheez pakdo.`,
-      model
+      model,
+      trailing // a photo turn that has to regenerate still has to show the photo
     );
     const better = dedupeParagraphs(retry);
     if (!repeatsPrevious(better, prevAgent)) reply = better;
@@ -431,16 +432,30 @@ const STOPish = new Set([
   "karte", "karti", "karta", "hota", "hoti", "rehte", "rehti", "lagta", "lagti",
 ]);
 
-async function chatOnce(history, context, model) {
+/* `trailing` is a one-turn instruction placed AFTER the conversation instead
+   of before it, and the position is the entire point.
+
+   Anything passed as `context` sits behind SYSTEM_PROMPT's twelve standing
+   rules, and on a long history the model reliably follows the rules and drops
+   the one-off. Measured, not assumed: the mid-session photo instruction was
+   confirmed present in context, on sarvam-105b, and ignored on every attempt
+   until it moved here. The opener has always worked precisely because it
+   arrives as a message rather than as context.
+
+   It stays out of sess.history deliberately — history is the record of what
+   was actually said, and a directive written into it would come back as "her
+   last words" in the echo and dead-end fallbacks. */
+async function chatOnce(history, context, model, trailing) {
   return sarvam.chat({
     label: "Chat",
     model: model || CFG.chatModel,
     temperature: 0.4,
-    maxTokens: 160,
+    maxTokens: trailing ? 320 : 160, // a described photo does not fit in 160
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       ...(context ? [{ role: "system", content: context }] : []),
       ...history,
+      ...(trailing ? [{ role: "system", content: trailing }] : []),
     ],
   });
 }
@@ -627,6 +642,67 @@ Return ONLY JSON: {"title": "chapter title in Hindi", "paragraphs": [{"text": ".
   return out;
 }
 
+/* ── photos ─────────────────────────────────────────────────────────
+   When a second photo may appear. See the guards at the call site in
+   handleTurn for why each of these exists. */
+const PHOTO_EARLIEST_TURN = 4;  // the opening belongs to whatever she arrived with
+const PHOTO_LATEST_TURN = 8;    // by here, stop leaving it to chance
+const PHOTO_CHANCE = 0.4;
+
+/* The instruction that puts a photo in front of her, written once.
+
+   Both callers — the session opener and the later mid-session moment — need
+   the identical safety wording, and that wording is load-bearing: describe it
+   aloud because her eyes may be poor, invent nothing beyond what the family
+   supplied, and never ask "who is this" (F3 — a photo must not become a test).
+   The deceased warning is the sharpest of them, and D2 exists because the
+   worst thing this product could do is cheerfully ask after someone who has
+   died. Two copies of that paragraph would eventually become two different
+   paragraphs, and only one of them would be right. */
+/* A photo row as the UI needs it. The full family context rides along so the
+   picture is always captioned — whose moment it is, where, when. A bare
+   unexplained image in front of someone with memory loss is a quiz. */
+function photoPayload(photo) {
+  if (!photo) return null;
+  return {
+    id: photo.id,
+    url: `/api/photo-file/${photo.file}`,
+    event: photo.event || "",
+    place: photo.place || "",
+    year: photo.year || "",
+    people: (() => {
+      try { return JSON.parse(photo.people_json || "[]").map((x) => x.name + (x.relation ? ` (${x.relation})` : "")); }
+      catch { return []; }
+    })(),
+  };
+}
+
+function describePhoto(photo, { opener }) {
+  const ppl = (() => { try { return JSON.parse(photo.people_json || "[]"); } catch { return []; } })();
+  const deceased = ppl.filter((x) => x.deceased).map((x) => x.name);
+  const who = ppl.map((x) => x.name + (x.relation ? ` (${x.relation})` : "")).join(", ") || "parivaar ke log";
+  const when = `${photo.event || "ek yaadgar pal"}${photo.place ? ", " + photo.place : ""}${photo.year ? ", " + photo.year : ""}`;
+  const care = `Photo ko aawaz se BAYAAN karo (unki aankhein kamzor ho sakti hain) — sirf upar di gayi jaankari se, kuch bhi gadho mat. ${opener ? "Is turn mein 3 vaakya tak theek hai." : "Do se teen vaakya."} Phir EK bhavna-wala sawaal — kabhi "kaun hai / kab tha" jaisa test nahi.${deceased.length ? ` SAAVDHAN: ${deceased.join(", ")} ab nahi rahe — unka zikr sirf past tense mein, unke baare mein khud se sawaal kabhi nahi.` : ""}`;
+  const notes = photo.notes ? `Parivaar ne bataya: ${photo.notes}. ` : "";
+
+  if (opener) {
+    return `Unke parivaar ne ek photo bheji hai jo unke saamne screen par aa rahi hai: ${when}. Isme hain: ${who}. ${notes}${care}`;
+  }
+  /* Mid-session the photo must arrive as a gift, not a subject change — so the
+     instruction asks the model to close what she was saying first. This is the
+     D4 objection answered in the prompt rather than by refusing to show the
+     photo at all.
+
+     The two explicit overrides are not padding. Tested: without them the model
+     obeys the standing rules and never mentions the picture, so the image
+     lands on her screen in silence. Rule 10 caps a reply at 35 words, which is
+     less than it takes to describe anything; rule 12 forbids speaking the name
+     of a place or person she has not herself mentioned, which is every proper
+     noun on a photo the family just uploaded. Both rules are right in general
+     and wrong for this one turn, so this turn says so. */
+  return `SABSE ZAROORI — IS TURN KA MUKHYA KAAM: unke parivaar ki ek NAYI photo abhi unke saamne screen par aa gayi hai. Ise anadekha karna SAKHT MANA hai. Photo: ${when}. Isme hain: ${who}. ${notes}Pehle unki abhi wali baat ek chhote vaakya mein garmjoshi se poori karo (usse kaato mat), phir narmi se photo dikhao — jaise "dekhiye, abhi aapke parivaar ne ek tasveer bheji hai". ${care} IS TURN KE LIYE DO CHHOOT: (1) niyam 10 ka 35-shabd ka bandhan laagu NAHI hota — teen vaakya tak theek hai; (2) niyam 12 ke bawajood, UPAR DI GAYI photo ki jagah, saal aur naam bolna is turn mein SAHI hai, kyunki parivaar ne khud ye jaankari di hai. Iske alawa kuch bhi mat gadho.`;
+}
+
 // ─── the turn pipeline ─────────────────────────────────────────────
 // Unknown person: extraction runs FIRST (blocking) so a returning elder
 // is recognized in the same reply ("Aapne bataya tha ki aap Pune mein...").
@@ -688,6 +764,41 @@ const themeLine = sess.theme && !cueNudge && sess.contract.ENGAGED.turns <= 5
   const remLine = sess.reminder && !sess.reminderAcked && !cueNudge && sess.contract.ENGAGED.turns >= 2
     ? `\n\nPARIVAAR KI EK BAAT (is baat-cheet mein SIRF EK BAAR, sahaj tarike se, apnapan se — hukum ki tarah nahi): "${sess.reminder.text}". Agar pehle se keh chuki ho toh dobara mat kaho.`
     : "";
+
+  /* A second photo, later in the session (supersedes D4).
+     D4 put photos at session start only, on the grounds that mid-conversation
+     injection needs topic-relevance logic and risks derailing her tangent.
+     That reasoning still holds for injecting at an ARBITRARY moment, so this
+     does not do that — it waits until the conversation has run its course and
+     lets a photo land as the closing note rather than an interruption.
+
+     The guards are the whole design:
+       · not before turn 4 — the opening belongs to whatever she arrived with
+       · never during a stall — she is already struggling to retrieve; putting
+         a new image in front of her then is the cruellest possible timing
+       · never in the same breath as a family reminder
+       · only a photo the family has cleared, via the same nextNewPhoto() gate
+         the opener uses, so D2's deceased rule cannot be bypassed by this path
+     Random within that window so it is not always the same turn, and forced by
+     turn 8 so a session with photos waiting never simply ends without them. */
+  let photo = null;
+  const photoEligible =
+    sess.personId && !cueNudge && !remLine && sess.contract.ENGAGED.turns >= PHOTO_EARLIEST_TURN;
+  if (photoEligible && (sess.contract.ENGAGED.turns >= PHOTO_LATEST_TURN || Math.random() < PHOTO_CHANCE)) {
+    photo = db.nextNewPhoto(sess.personId);
+    if (photo) {
+      db.markPhotoShown(photo.id);
+      /* The same call the stall path makes, for the same reason: this is a
+         delicate turn that has to follow a long instruction against standing
+         rules, and 30b drops it. Rare enough that the latency is affordable. */
+      turnModel = "sarvam-105b";
+      console.log(`[photo] surfacing #${photo.id} mid-session at turn ${sess.contract.ENGAGED.turns}`);
+    }
+  }
+  /* Passed as `trailing`, not folded into the context block — see chatOnce for
+     why that placement is the difference between the photo being described and
+     the photo being silently ignored. */
+  const photoInstruction = photo ? describePhoto(photo, { opener: false }) : null;
   const turnContext = sess.context
     ? sess.context
       + (sess.recognitionNudge ? `\n\n${sess.recognitionNudge}` : "")
@@ -695,8 +806,15 @@ const themeLine = sess.theme && !cueNudge && sess.contract.ENGAGED.turns <= 5
       + themeLine
       + remLine
     : null;
+  /* The photo instruction deliberately does NOT go through turnContext.
+     turnContext is null until she has memories on file, and a brand-new elder
+     is exactly the person whose family has just uploaded a first photo — so
+     routing it there dropped it for the case that mattered most, putting a
+     silent unexplained picture in front of her and burning it as SHOWN on the
+     way past. It goes in as `trailing` instead, which also fixed the model
+     ignoring it. */
   sess.recognitionNudge = null; // one turn only
-  let reply = await chatNoEcho(sess.history, turnContext, turnModel, sess.lang);
+  let reply = await chatNoEcho(sess.history, turnContext, turnModel, sess.lang, photoInstruction);
   // A cue must not contain the answer. The model both prefaces hints with
   // "Aapne bataya tha ki <the fact>" AND sometimes just states the fact
   // outright, so prompt rules aren't enough: compare the hint against what
@@ -806,7 +924,7 @@ const themeLine = sess.theme && !cueNudge && sess.contract.ENGAGED.turns <= 5
     }
   }
 
-  return { reply, audio, tChat, tTts };
+  return { reply, audio, tChat, tTts, photo };
 }
 
 /* ── the scenario simulator ────────────────────────────────────────
@@ -1126,9 +1244,7 @@ const server = http.createServer(async (req, res) => {
           // stated from family context, questions with no wrong answer (F3)
           photo = db.nextNewPhoto(person.id);
           if (photo) {
-            const ppl = JSON.parse(photo.people_json || "[]");
-            const deceased = ppl.filter((x) => x.deceased).map((x) => x.name);
-            openerInstruction = `(session shuru — ye ${person.name} ji hain, garam swagat karo. Unke parivaar ne ek photo bheji hai jo unke saamne screen par aa rahi hai: ${photo.event || "ek yaadgar pal"}${photo.place ? ", " + photo.place : ""}${photo.year ? ", " + photo.year : ""}. Isme hain: ${ppl.map((x) => x.name + (x.relation ? ` (${x.relation})` : "")).join(", ") || "parivaar ke log"}. ${photo.notes ? "Parivaar ne bataya: " + photo.notes + ". " : ""}Photo ko aawaz se BAYAAN karo (unki aankhein kamzor ho sakti hain) — sirf upar di gayi jaankari se, kuch bhi gadho mat. Is turn mein 3 vaakya tak theek hai. Phir EK bhavna-wala sawaal — kabhi "kaun hai / kab tha" jaisa test nahi.${deceased.length ? ` SAAVDHAN: ${deceased.join(", ")} ab nahi rahe — unka zikr sirf past tense mein, unke baare mein khud se sawaal kabhi nahi.` : ""} Naam mat poochho.)`;
+            openerInstruction = `(session shuru — ye ${person.name} ji hain, garam swagat karo. ${describePhoto(photo, { opener: true })} Naam mat poochho.)`;
             db.markPhotoShown(photo.id);
           }
 
@@ -1190,14 +1306,7 @@ const server = http.createServer(async (req, res) => {
         theme: sess.theme ? { key: sess.theme, title: THEMES[sess.theme].title, title_en: THEMES[sess.theme].title_en } : null,
         // full family context rides along so the UI can caption the photo:
         // whose moment it is, where, when — never a bare unexplained image
-        photo: photo ? {
-          id: photo.id,
-          url: `/api/photo-file/${photo.file}`,
-          event: photo.event || "",
-          place: photo.place || "",
-          year: photo.year || "",
-          people: (() => { try { return JSON.parse(photo.people_json || "[]").map((x) => x.name + (x.relation ? ` (${x.relation})` : "")); } catch { return []; } })(),
-        } : null,
+        photo: photoPayload(photo),
       });
       return;
     }
@@ -1251,6 +1360,7 @@ const server = http.createServer(async (req, res) => {
         person: sess.personName,
         language: sess.lang || CFG.ttsLang,
         contract: sess.contract,
+        photo: photoPayload(out.photo),
       });
       return;
     }
@@ -1288,7 +1398,7 @@ const server = http.createServer(async (req, res) => {
       const delayMs = parseInt(req.headers["x-delay-ms"], 10);
       const out = await handleTurn(sess, id, transcript, audioFile, Number.isFinite(delayMs) ? delayMs : null);
       console.log(`[turn] stt=${tStt}ms chat=${out.tChat}ms tts=${out.tTts}ms | "${transcript}" → "${out.reply}"`);
-      json(res, 200, { transcript, text: out.reply, audio: out.audio, person: sess.personName, contract: sess.contract });
+      json(res, 200, { transcript, text: out.reply, audio: out.audio, person: sess.personName, contract: sess.contract, photo: photoPayload(out.photo) });
       return;
     }
 
@@ -1303,7 +1413,7 @@ const server = http.createServer(async (req, res) => {
       const delayMs = parseInt(req.headers["x-delay-ms"], 10);
       const out = await handleTurn(sess, id, text, null, Number.isFinite(delayMs) ? delayMs : null,
         { synthesizeAudio: body.tts !== false }); // see /api/session/start
-      json(res, 200, { transcript: text, text: out.reply, audio: out.audio, person: sess.personName, contract: sess.contract });
+      json(res, 200, { transcript: text, text: out.reply, audio: out.audio, person: sess.personName, contract: sess.contract, photo: photoPayload(out.photo) });
       return;
     }
 

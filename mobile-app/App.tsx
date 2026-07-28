@@ -33,8 +33,8 @@ import { useKeepAwake } from 'expo-keep-awake';
 import { WebView } from 'react-native-webview';
 import type { WebViewNavigation } from 'react-native-webview';
 
-const APP_URL = 'https://sarvam-buildathon-production.up.railway.app/';
-const APP_ORIGIN = 'https://sarvam-buildathon-production.up.railway.app';
+const APP_URL = 'https://www.yaadeinapp.com/';
+const APP_ORIGIN = 'https://www.yaadeinapp.com';
 
 /* Matches the site's own <meta name="theme-color">, so the shell and the
    page it hosts are the same colour and there's no flash between them. */

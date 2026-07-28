@@ -53,7 +53,7 @@ export type TryShellProps = {
 
 export function TryShell({
   phone, gateOpen, onPhone, onCloseGate,
-  theme, voice, levelRef, lines, error, contract,
+  theme, voice, levelRef, lines, error,
   onMic, micDisabled, micActive, micLabel, idleHint, thinking, errorHint,
   children,
 }: TryShellProps) {
@@ -149,26 +149,14 @@ export function TryShell({
           </p>
         )}
 
-        {contract && (
-          <div className="mt-6 flex w-full flex-wrap items-center justify-center gap-1.5">
-            {(['RESUMED', 'CAPTURED', 'CLOSED', 'WRITTEN', 'SAFE'] as const).map((k) => {
-              const v = contract[k]
-              const on = typeof v === 'number' ? v > 0 : !!v
-              return (
-                <span
-                  key={k}
-                  className={`rounded-full px-2.5 py-1 font-mono text-[9px] tracking-[0.12em] ${
-                    on ? 'bg-sr-green-600/10 text-sr-green-600' : 'bg-sf-secondary text-tx-tertiary'
-                  }`}
-                  title="Session Contract — every session passes or fails, live"
-                >
-                  {on ? '✓' : '·'} {k}
-                  {typeof v === 'number' && v > 0 ? ` ${v}` : ''}
-                </span>
-              )
-            })}
-          </div>
-        )}
+        {/* The Session Contract scoreboard used to sit here — RESUMED /
+            CAPTURED / CLOSED / WRITTEN / SAFE, ticking live. It is a proof
+            instrument for judges and it reads like one, which is the problem:
+            this screen belongs to someone with memory loss, and five English
+            audit chips under the orb are noise she cannot act on. The contract
+            is still computed and still returned by the API — the family
+            dashboard and the scenario simulator both read it — it just no
+            longer sits in her eyeline. */}
 
         {/* voice-first: no chat history — only Yaadein's latest words,
             centered like a caption under the orb */}

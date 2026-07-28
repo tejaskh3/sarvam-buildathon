@@ -73,7 +73,11 @@ through `dodo …` commands without ever reading the value.
 ### 1c. What Claude does next
 Creates the `Yaadein Family` subscription (₹1,499 / month, INR), pulls its
 payment link, registers the webhook endpoint at
-`https://sarvam-buildathon-production.up.railway.app/api/dodo/webhook`
+`https://www.yaadeinapp.com/api/dodo/webhook`
+⚠️ **If the endpoint currently registered in the Dodo dashboard still points at
+the old `…up.railway.app` host, change it there too — editing this line does
+not move it.** Both hosts serve the same app today, so payments keep working
+either way; the risk is the day the Railway subdomain is retired.
 subscribed to `payment.succeeded`, `payment.failed`, `subscription.active`,
 `subscription.cancelled`, `subscription.failed`, `subscription.expired`, and
 retrieves the `whsec_…` signing secret.
@@ -132,8 +136,11 @@ household's phone number on that device.
 
 ### 2b. Allowed origins
 **Configure → Domains** (or Paths, depending on the dashboard version) → add
-`https://sarvam-buildathon-production.up.railway.app`. `localhost` is already
-allowed. Sign-in fails silently on any origin Clerk doesn't know.
+**both** `https://www.yaadeinapp.com` and `https://yaadeinapp.com`, and keep
+`https://sarvam-buildathon-production.up.railway.app` while it still resolves.
+`localhost` is already allowed. **Sign-in fails silently on any origin Clerk
+doesn't know** — so if the family dashboard stops letting anyone in after the
+domain switch, this list is the first thing to check.
 
 ### 2c. Nothing else
 No JWT template, no webhook, no organisation setup. Defaults are fine.

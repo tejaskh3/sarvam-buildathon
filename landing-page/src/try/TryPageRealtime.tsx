@@ -6,7 +6,7 @@ import { clearStoredPhone, getStoredPhone } from '../components/PhoneGate'
 import { API } from '../lib/api'
 import { TryShell } from './TryShell'
 import { elderError } from './errors'
-import type { Line } from './types'
+import type { Line, PhotoCard } from './types'
 
 /* ------------------------------------------------------------------
    Try Yaadein — a continuous Pipecat WebRTC voice session.
@@ -72,6 +72,9 @@ export function TryPageRealtime() {
       text?: string
       contract?: Record<string, unknown>
       message?: string
+      /* Relayed straight through by the sidecar — the Node side decides when
+         a photo appears, and this transport only has to not drop it. */
+      photo?: PhotoCard
     }
     if (message.type === 'error') {
       setError(message.message || 'The realtime voice service had a problem.')
@@ -83,7 +86,7 @@ export function TryPageRealtime() {
     setLines((current) => [
       ...current,
       ...(message.transcript ? [{ who: 'you' as const, text: message.transcript }] : []),
-      { who: 'agent', text: reply },
+      { who: 'agent', text: reply, photo: message.photo ?? undefined },
     ])
   }, [])
 

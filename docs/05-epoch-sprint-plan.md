@@ -23,7 +23,7 @@
 2. **The API contract below is FROZEN once we start.** UI builds against it (mock with the JSON examples). Backend implements it exactly. Any change = message the group first.
 3. **Branches & PRs:** `main` is always deployable. Branches: `be/<feature>`, `ui/<feature>`. PR reviewer: Tejas reviews backend PRs (sanity/scope), Claude reviews UI PRs (API usage + the localhost rule). Small PRs — one feature each. Merge order in §5.
 4. **Deploys:** only Tejas runs `railway up`, only from `main`, only after `node scripts/attack.mjs` passes and `grep -o "localhost:3000" landing-page/dist/assets/*.js | wc -l` prints 0. The volume keeps data safe, but deploys restart the server (~30s outage) — don't deploy during a live user session or demo.
-5. **Prod URL:** `https://sarvam-buildathon-production.up.railway.app` · Sarvam key: Railway env var `SARVAM_API_KEY` · admin numbers: `1231231239` (Tejas), `1231231238` (teammate).
+5. **Prod URL:** `https://www.yaadeinapp.com` · Sarvam key: Railway env var `SARVAM_API_KEY` · admin numbers: `1231231239` (Tejas), `1231231238` (teammate).
 
 ---
 
@@ -231,9 +231,9 @@ went in a day" is scarcity you can prove. Keep the *count* out of the message
 body though: the page has a live counter, and a hardcoded "38 left" is stale
 within the hour.
 
-    curl -s https://sarvam-buildathon-production.up.railway.app/api/waitlist
+    curl -s https://www.yaadeinapp.com/api/waitlist
 
-Link: `https://sarvam-buildathon-production.up.railway.app/#/waitlist`
+Link: `https://www.yaadeinapp.com/#/waitlist`
 
 **a. One-to-one (the one that actually converts — send it person by person)**
 
@@ -253,7 +253,7 @@ Link: `https://sarvam-buildathon-production.up.railway.app/#/waitlist`
 >
 > Your parent doesn't install anything or sign in to anything. You send them one
 > link and they tap a circle and talk. Setup takes two minutes:
-> https://sarvam-buildathon-production.up.railway.app/#/waitlist
+> https://www.yaadeinapp.com/#/waitlist
 >
 > I'll set it up with you myself on a call if that's easier — just reply here.
 
@@ -272,7 +272,7 @@ problem the group already talks about, keep it to four lines, and say who you ar
 > recall came back. It's free for three months for the first 50 families, no card,
 > and nothing for the elder to install.
 >
-> If it's useful to anyone here: https://sarvam-buildathon-production.up.railway.app/#/waitlist
+> If it's useful to anyone here: https://www.yaadeinapp.com/#/waitlist
 > Happy to answer anything, and happy to be told it's not welcome here — mods,
 > just say so and I'll delete it.
 

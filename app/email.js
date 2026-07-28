@@ -39,8 +39,10 @@ const RESEND = "https://api.resend.com/emails";
    domain before pointing this at real families. */
 const from = () => process.env.EMAIL_FROM || "Yaadein <onboarding@resend.dev>";
 const replyTo = () => process.env.EMAIL_REPLY_TO || null;
-const site = () =>
-  process.env.PUBLIC_URL || "https://sarvam-buildathon-production.up.railway.app";
+/* The fallback is the real domain, not the Railway one. Every seat
+   confirmation carries this link, and a family's first impression should not
+   be a hosting provider's subdomain. PUBLIC_URL still overrides it. */
+const site = () => process.env.PUBLIC_URL || "https://www.yaadeinapp.com";
 
 const configured = () => !!(process.env.RESEND_API_KEY || "").trim();
 

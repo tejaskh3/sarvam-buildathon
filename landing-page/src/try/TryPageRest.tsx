@@ -158,7 +158,10 @@ export function TryPageRest() {
       setLines((l) => [
         ...l,
         { who: 'you', text: j.transcript },
-        { who: 'agent', text: j.text },
+        /* A photo can now arrive on any turn, not only the opener — the
+           server picks the moment. Attaching it here is what makes it appear
+           on screen while Yaadein describes it aloud. */
+        { who: 'agent', text: j.text, photo: j.photo ?? undefined },
       ])
       await play(j.audio)
       /* hands-free: when Yaadein finishes, the floor returns to them

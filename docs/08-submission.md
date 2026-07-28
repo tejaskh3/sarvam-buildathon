@@ -1,6 +1,6 @@
 # Epoch Submission Pack — Yaadein
 
-Live: **https://sarvam-buildathon-production.up.railway.app**
+Live: **https://www.yaadeinapp.com**
 Try it: `#/try` · Family dashboard: `#/family` · Live usage: `#/stats`
 Demo number for judges: **1234567890** (shared) — or register any 10-digit number.
 

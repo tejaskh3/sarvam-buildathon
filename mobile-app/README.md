@@ -1,7 +1,7 @@
 # Yaadein — Android shell
 
 A thin WebView wrapper around the live site at
-`https://sarvam-buildathon-production.up.railway.app/`.
+`https://www.yaadeinapp.com/`.
 
 Nothing about the product lives in this binary. The app loads production, so
 anything you ship to Railway is live on the demo phone the next time it opens —
