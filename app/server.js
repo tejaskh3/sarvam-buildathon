@@ -1203,18 +1203,33 @@ const server = http.createServer(async (req, res) => {
       });
 
       // A seat with a number on it is a household we can switch on the same day,
-      // so create it now instead of chasing it later. Same claim rule as
-      // /api/register: a row already owned by somebody else is left alone.
-      if (phone) {
+      // so create it now instead of chasing it later — but ONLY when we know who
+      // owns it.
+      //
+      // Creating it without an owner was a live privacy hole, and it opened the
+      // moment this route stopped requiring sign-in. An ownerless household is
+      // treated as unclaimed everywhere else: ownsPhone() lets ANY signed-in
+      // account read it, and /api/register lets any signed-in account take it.
+      // So an email-only signup minted a household that a stranger who guessed
+      // the number could read and then seize, locking the real family out of
+      // their own mother's memories. Proven end to end against the HTTP gate
+      // before this line changed; see the ownerless cases in scripts/auth-tests.
+      //
+      // The phone is not lost by skipping this: it is on the waitlist row, which
+      // is what we work from when setting a family up by hand. The household
+      // gets created — owned — the moment they sign in and confirm the number.
+      if (phone && ownerId) {
         const existing = db.getRegistration(phone);
         if (!existing || !existing.owner_id || existing.owner_id === ownerId) {
           db.register({
             phone, elder_name: elderName, language, family_name: familyName,
-            source: "waitlist", verified: ownerId ? 1 : 0, owner_id: ownerId,
+            source: "waitlist", verified: 1, owner_id: ownerId,
           });
         } else {
           console.warn(`[waitlist] seat #${seat.seat} left ${phone} alone — owned by ${existing.owner_id}`);
         }
+      } else if (phone) {
+        console.log(`[waitlist] seat #${seat.seat} kept ${phone} on the seat only — no account to own it yet`);
       }
 
       const taken = db.waitlistCount();

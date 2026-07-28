@@ -110,7 +110,7 @@ export function LangSelect({
           <span id={`${id}-label`} className="text-tx-tertiary">
             Language ·{' '}
           </span>
-          <span id={`${id}-value`}>{selected[1]}</span>
+          <span id={`${id}-value`} lang={selected[0]}>{selected[1]}</span>
           {selected[1] !== selected[2] && (
             <span className="text-tx-tertiary"> ({selected[2]})</span>
           )}
@@ -140,7 +140,7 @@ export function LangSelect({
                   i === active ? 'bg-sf-secondary' : ''
                 } ${isSelected ? 'text-tx font-medium' : 'text-tx-secondary'}`}
               >
-                <span>
+                <span lang={code}>
                   {native}
                   {native !== english && (
                     <span className="text-tx-tertiary text-[13px]"> · {english}</span>

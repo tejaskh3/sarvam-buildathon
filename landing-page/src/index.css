@@ -246,3 +246,31 @@
 .cl-footer > *:not(.cl-footerAction):not(:has(.cl-footerAction)) {
   display: none !important;
 }
+
+/* ------------------------------------------------------------------
+   Keyboard focus.
+
+   There was none. `outline-none` appeared 13 times in the components and
+   nothing replaced it — no focus-visible, no ring — so tabbing through the
+   site left you with no idea where you were. That locks out keyboard and
+   switch-access users, which for a product aimed at people with motor and
+   cognitive difficulty is the wrong group to lose.
+
+   Deliberately last in the file and deliberately !important: Tailwind's
+   `outline-none` utility sets a real transparent outline, so a baseline that
+   has to win against it everywhere cannot depend on source order surviving a
+   refactor. :focus-visible, not :focus, so a mouse click on a button doesn't
+   draw a ring nobody asked for.
+   ------------------------------------------------------------------ */
+:focus-visible {
+  outline: 2px solid var(--color-sr-indigo-700) !important;
+  outline-offset: 2px !important;
+}
+
+/* On ink-coloured surfaces indigo-on-near-black is nearly invisible, so the
+   ring goes light. Covers the dark footer, the languages band and the primary
+   pill. */
+.bg-tx :focus-visible,
+.pill-primary:focus-visible {
+  outline-color: #ffffff !important;
+}

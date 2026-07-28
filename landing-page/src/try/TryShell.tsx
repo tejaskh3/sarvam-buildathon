@@ -127,9 +127,19 @@ export function TryShell({
           )}
         </div>
 
+        {/* Sized for the person reading it. This was 13px red text — the same
+            treatment a developer console gets — on the one screen built for
+            someone whose eyesight and patience we should assume nothing about.
+            role="alert" so a screen reader announces it without being asked. */}
         {error && (
-          <p className="mt-4 rounded-lg bg-red-50 px-4 py-2 text-[13px] text-red-800">
-            {error} {errorHint}
+          <p
+            role="alert"
+            className="border-sr-rose-100 mt-5 max-w-[460px] rounded-2xl border bg-white px-5 py-4 text-[15px] leading-relaxed text-pretty text-red-900"
+          >
+            {error}
+            {errorHint && (
+              <span className="text-tx-tertiary mt-1.5 block text-[12.5px]">{errorHint}</span>
+            )}
           </p>
         )}
 

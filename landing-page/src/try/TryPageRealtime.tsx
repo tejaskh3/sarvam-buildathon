@@ -5,6 +5,7 @@ import { type Voice } from '../components/Orb'
 import { clearStoredPhone, getStoredPhone } from '../components/PhoneGate'
 import { API } from '../lib/api'
 import { TryShell } from './TryShell'
+import { elderError } from './errors'
 import type { Line } from './types'
 
 /* ------------------------------------------------------------------
@@ -161,7 +162,7 @@ export function TryPageRealtime() {
             const detail = (message as { data?: { message?: string } }).data?.message
             setError(detail || 'The realtime voice connection had a problem.')
           },
-          onDeviceError: (deviceError) => setError(deviceError.message),
+          onDeviceError: (deviceError) => setError(elderError(deviceError)),
           onLocalAudioLevel: (level) => {
             if (voiceRef.current !== 'speaking') levelRef.current = Math.min(level * 2.5, 1)
           },
@@ -210,7 +211,7 @@ export function TryPageRealtime() {
     } catch (e) {
       if (client) await client.disconnect().catch(() => {})
       clientRef.current = null
-      setError(e instanceof Error ? e.message : String(e))
+      setError(elderError(e))
       setState('idle')
     }
   }, [busy, handleServerMessage])

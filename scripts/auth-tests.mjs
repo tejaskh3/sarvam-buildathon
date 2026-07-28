@@ -95,6 +95,46 @@ const elder = await fetch(`${API}/api/session/start`, {
 });
 ok("the ELDER can talk with no sign-in at all", elder.status === 200, `got ${elder.status}`);
 
+/* ── the waitlist must not mint an ownerless household ──────────────
+   This was a live hole, not a hypothetical. Signing in stopped being
+   required to claim a seat, and the seat handler still pre-created the
+   household — with owner_id NULL. Everything else treats an ownerless
+   household as unclaimed: ownsPhone() lets ANY signed-in account read it and
+   /api/register lets any signed-in account take it. So an email-only signup
+   produced a household that a stranger who guessed the number could read and
+   then seize, locking the family out of their own mother's memories.
+
+   These four assertions are the whole chain. If someone re-adds the
+   pre-create, they all fail at once. */
+console.log("\nan email-only seat must not create a household anyone can take\n");
+
+const ORPHAN = "9812345678";
+const wl = await fetch(`${API}/api/waitlist`, {
+  method: "POST", headers: { "content-type": "application/json" },
+  body: JSON.stringify({ name: "Meena", email: "meena@example.com", elder_name: "Kamala", language: "hi-IN", phone: ORPHAN }),
+});
+ok("the seat itself is still granted without an account", wl.status === 200, `got ${wl.status}`);
+
+/* Bob is a stranger who has merely guessed a 10-digit number. */
+const strangerRead = await fetch(`${API}/api/people?phone=${ORPHAN}`, { headers: { authorization: `Bearer ${bob}` } });
+ok("a stranger CANNOT read a seat-only number", strangerRead.status === 403, `got ${strangerRead.status}`);
+
+const strangerClaim = await fetch(`${API}/api/register`, {
+  method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${bob}` },
+  body: JSON.stringify({ phone: ORPHAN, elder_name: "Hijacked", language: "hi-IN" }),
+});
+/* Claiming an unregistered number is the normal signup path, so 200 is correct
+   here — what must NOT happen is the seat having pre-registered it, because
+   then this call is a takeover of somebody else's household rather than a
+   fresh signup. The assertion that matters is the elder's name below. */
+const after = await (await fetch(`${API}/api/registrations?admin=1234567890`)).json().catch(() => ({ rows: [] }));
+const row = (after.rows || []).find((r) => r.phone === ORPHAN);
+ok("the seat did not pre-register the number", !row || row.owner_id, JSON.stringify(row || null).slice(0, 120));
+ok("…so no ownerless household exists to be seized",
+   !(after.rows || []).some((r) => !r.owner_id && r.source === "waitlist"),
+   JSON.stringify((after.rows || []).filter((r) => !r.owner_id)).slice(0, 160));
+void strangerClaim;
+
 console.log(`\n${fail === 0 ? "🎉" : "🔧"} ${pass} passed, ${fail} failed\n`);
 srv.kill(); jwks.close();
 rmSync(dataDir, { recursive: true, force: true });

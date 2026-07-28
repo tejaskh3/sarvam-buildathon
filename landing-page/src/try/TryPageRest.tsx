@@ -4,6 +4,7 @@ import { clearStoredPhone, getStoredPhone } from '../components/PhoneGate'
 import { API } from '../lib/api'
 import { encodeWavPcm } from '../lib/wav'
 import { TryShell } from './TryShell'
+import { elderError } from './errors'
 import type { Line } from './types'
 
 /* ------------------------------------------------------------------
@@ -161,7 +162,7 @@ export function TryPageRest() {
         setState('listening')
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(elderError(e))
       setState('idle')
     }
   }, [play, playAck])
@@ -259,7 +260,7 @@ export function TryPageRest() {
       recRef.current = { chunks: [], lastVoice: Date.now(), startedAt: Date.now() }
       setState('listening')
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(elderError(e))
       setState('idle')
     }
   }, [ensureMic, finishRecording, play])

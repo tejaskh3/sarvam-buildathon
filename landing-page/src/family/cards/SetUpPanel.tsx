@@ -70,7 +70,7 @@ export function SetUpPanel({ onDone }: { onDone: (phone: string) => void }) {
         You&apos;re signed in
       </p>
       <h1 className="font-season text-tx mt-3 text-[30px] leading-tight tracking-tight text-balance sm:text-[34px]">
-        Nothing here yet — nobody has talked to Yaadein.
+        One step left: connect your parent&apos;s phone.
       </h1>
 
       {/* The question the old modal never answered. */}
@@ -82,10 +82,27 @@ export function SetUpPanel({ onDone }: { onDone: (phone: string) => void }) {
         how this page finds their memories later.
       </p>
 
+      {/* The returning-from-the-waitlist case, said out loud.
+          A seat claimed with an email only cannot be linked to a Google account
+          automatically — nothing connects the two, and trusting a
+          browser-supplied address would let anyone claim a stranger's seat. So
+          the number is the thing that reconnects them, and this line is what
+          stops the page reading as "your signup vanished". It used to open with
+          "Nothing here yet", which is exactly the wrong sentence for someone who
+          filled in this number a week ago. */}
+      <p className="border-st-secondary text-tx-secondary mt-4 rounded-xl border border-dashed bg-white px-4 py-3 text-[13.5px] leading-relaxed text-pretty">
+        <span className="text-tx font-medium">Already claimed a seat</span> and told
+        us their number then? Enter the same number below — nothing was lost, and
+        it will pick up whatever they&apos;ve already said.
+      </p>
+
       <div className="card mt-7 p-6">
-        <p className="text-tx text-[15px] font-medium">Set up your parent</p>
+        <p className="text-tx text-[15px] font-medium">
+          Their number, and how to greet them
+        </p>
         <p className="text-tx-tertiary mt-1 text-[13px] leading-relaxed">
-          Takes about a minute. You can change any of it afterwards.
+          Takes about a minute. You can change any of it afterwards — and if
+          they&apos;ve already talked to Yaadein, their memories are waiting.
         </p>
 
         <div className="mt-4 space-y-3">

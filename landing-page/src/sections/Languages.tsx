@@ -116,14 +116,18 @@ export function Languages() {
           {SAID_IN.map(([code, native, english, line]) => (
             <div key={code} className="bg-tx flex flex-col gap-3 px-6 py-7">
               <div className="flex items-baseline justify-between gap-3">
-                <span className="font-season text-[27px] leading-none text-white">
+                {/* lang= so a screen reader switches voice. Without it every
+                    line below is read with an English voice, which on a page
+                    whose whole claim is "spoken, not translated" is the one
+                    accessibility miss that is also a credibility miss. */}
+                <span lang={code} className="font-season text-[27px] leading-none text-white">
                   {native}
                 </span>
                 <span className="shrink-0 font-mono text-[9.5px] tracking-[0.14em] text-white/35 uppercase">
                   {native === english ? code : english}
                 </span>
               </div>
-              <p className="text-[16px] leading-relaxed text-pretty text-white/80">
+              <p lang={code} className="text-[16px] leading-relaxed text-pretty text-white/80">
                 {line}
               </p>
             </div>
@@ -212,7 +216,7 @@ function Marquee() {
     <>
       {SAID_IN.map(([code, native]) => (
         <span key={code} className="flex items-center gap-7 px-7">
-          <span className="font-season text-[38px] leading-none whitespace-nowrap text-white/85 sm:text-[52px]">
+          <span lang={code} className="font-season text-[38px] leading-none whitespace-nowrap text-white/85 sm:text-[52px]">
             {native}
           </span>
           <span aria-hidden className="text-sr-indigo-300/60 text-[20px]">
