@@ -18,8 +18,9 @@ flowchart LR
   Family["Family<br/>dashboard"] --> Node
   Node["Node server<br/>app/server.js<br/>zero npm deps"] --> Sarvam
   Node --> DB[("SQLite<br/>node:sqlite")]
-  RT["Pipecat sidecar<br/>realtime/bot.py<br/>local only"] -.->|"final transcript"| Node
-  Elder -.->|"WebRTC, opt-in"| RT
+  Client["Pipecat TypeScript client<br/>lazy-loaded in the browser"] -.-> RT
+  RT["Pipecat Python sidecar<br/>realtime/bot.py<br/>local opt-in"] -.->|"final transcript"| Node
+  Elder -.->|"WebRTC, opt-in"| Client
   RT -.-> Sarvam
   Sarvam["Sarvam AI"]
 ```
@@ -51,8 +52,8 @@ app/          the whole backend, zero npm dependencies
   email.js      Resend receipts (seat confirmed, app announcement)
   prompts.js    the product's voice: system prompt, CST themes, orientation
   voice.js      pure text guards — repetition, dangling recall, fillers
-realtime/     Pipecat WebRTC sidecar (Python, optional, local only)
-landing-page/ React + Vite site, and both signed-in surfaces
+realtime/     Pipecat server pipeline (Python, optional, local only)
+landing-page/ React + Vite site, including the Pipecat TypeScript client
   src/try/        the elder's screen — one orb, nothing else
   src/family/     the caregiver dashboard, one module per panel
   src/waitlist/   the first-fifty cohort
@@ -77,7 +78,7 @@ cd landing-page && npm install && npm run dev
 
 Then open `http://localhost:3000/#/try`.
 
-**Realtime voice** is opt-in and local-only. Start the sidecar with `npm run realtime`, then set `VITE_REALTIME_URL=http://localhost:7860` in `landing-page/.env.local`. Leaving it unset — which is what any deploy does — keeps the record-then-upload loop that needs nothing but the Node server. See `app/.env.example` for why.
+**Realtime voice** is opt-in and local-only. Start the sidecar with `npm run realtime`, then set `VITE_REALTIME_URL=http://localhost:7860` in `landing-page/.env.local`. Leaving it unset — which is what any deploy does — keeps the record-then-upload loop that needs nothing but the Node server. The browser integration is already TypeScript; Pipecat's supported server runtime remains Python. See [the realtime deployment guide](docs/10-realtime-deployment.md) before enabling it in production.
 
 ## Tests
 
