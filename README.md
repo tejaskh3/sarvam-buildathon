@@ -115,8 +115,10 @@ stateDiagram-v2
   SUPERSEDED --> [*]
   ACTIVE --> UNRESOLVED: Contradicting statement
   UNRESOLVED --> ACTIVE: Family resolves conflict
-  ACTIVE --> AVOIDED: Family marks unsafe
-  AVOIDED --> ACTIVE: Family re-enables
+
+  state "safe_to_use flag" as flag
+  ACTIVE --> flag: Family marks avoid
+  flag --> ACTIVE: Family re-enables
 ```
 
 Every memory carries a provenance grade:
@@ -126,7 +128,9 @@ Every memory carries a provenance grade:
 - `USER_ELABORATED` -- they added detail beyond what was proposed
 - `USER_CORRECTED` -- they corrected a prior fact
 - `SESSION_OBSERVED` -- captured during a human-facilitated Session Scribe recording
-- `FAMILY_VERIFIED` -- the family confirmed it through the dashboard
+- `FAMILY_VERIFIED` -- set when a family member resolves an `UNRESOLVED` memory conflict via the dashboard
+
+There is no `AVOIDED` status. Instead, the family can set `safe_to_use = false` on any memory via the dashboard, which filters it out of conversation context at retrieval time. The actual statuses in the DB are `ACTIVE`, `SUPERSEDED`, and `UNRESOLVED`.
 
 Contradictions are detected automatically. When two facts conflict (e.g. "2 children" vs "3 children"), the newer one is stored as a variant, both are marked `UNRESOLVED`, and neither is used in conversation until the family resolves it.
 
@@ -139,7 +143,7 @@ Contradictions are detected automatically. When two facts conflict (e.g. "2 chil
 | Sarvam AI | STT, LLM, TTS, Translate. One key. | `api-subscription-key` header | No -- the product is Sarvam |
 | Clerk | Family dashboard Google OAuth | RS256 JWT verified against JWKS by hand using `node:crypto`, cached 55min | Yes -- unset means no auth, elder routes never need it |
 | Dodo Payments | Family subscriptions, founding seats | Standard Webhooks HMAC-SHA256, verified by hand, 5min replay tolerance | Yes -- unset means webhook returns 503, checkout links just disappear |
-| Resend | Seat confirmations, app announcements, check-in alerts | API key via `fetch` | Yes -- unset means emails log to console instead |
+| Resend | Seat confirmations, app announcements | API key via `fetch` | Yes -- unset means emails log to console instead |
 
 ---
 
@@ -164,7 +168,9 @@ app/                         Node.js backend, zero npm dependencies
                                KeyObject, caches 55min, verifies RS256 JWTs
   checkin.js                   Silence monitoring: sweeps on cadence (4h-168h), respects
                                quiet hours (with midnight wrapping), writes missed/resumed
-                               events, pluggable dialer slot
+                               events to DB. Has a pluggable dialer slot (setDialer) but
+                               nothing connects to it -- check-ins are DB events that the
+                               family dashboard reads, not push notifications
   dodo.js                      Dodo payment webhooks: HMAC-SHA256, plan mapping, replay
                                tolerance, constant-time comparison
   email.js                     Resend emails: seat confirmed (founding vs regular), app
@@ -308,7 +314,7 @@ npm run sim                          # scenario runner for conversation policy a
 
 ## Design constraints
 
-- **Zero npm dependencies in the backend.** SQLite via `node:sqlite`, JWT verification against Clerk JWKS by hand, webhook HMAC by hand -- all `node:crypto`. The frontend uses React, Clerk, Pipecat client, Three.js, and qrcode.
+- **Zero npm dependencies in the backend.** SQLite via `node:sqlite`, JWT verification against Clerk JWKS by hand, webhook HMAC by hand -- all `node:crypto`. The frontend uses React, Clerk, Three.js, and qrcode. (Pipecat client packages are installed but never imported in production builds.)
 - **The elder never signs in.** Phone number is identity. A family sends a one-tap WhatsApp link. Asking someone with memory loss to authenticate would contradict the product.
 - **Nothing is invented.** The agent only speaks facts someone actually supplied. Every memory carries provenance and original audio. The `fabricated-memory` guard drops any "aapne bataya tha" claim when the memory store is empty.
 - **Every reply is guarded in code.** The `BANNED` regex, the echo detector, the floor-keeper, and the cue-leak detector are all enforced in `voice.js` and `server.js`, not left to the system prompt. `sim.js` lints every reply for word limits, script fit, hallucinated details, and policy violations.
