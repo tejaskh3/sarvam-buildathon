@@ -543,11 +543,19 @@ async function ensureAcks() {
 }
 
 // ─── http helpers ─────────────────────────────────────────────────
-// CORS: the landing page (vite dev :5173 / deployed static site) calls this API
+/* CORS: the landing page (vite dev :5173 / a separately hosted static site)
+   calls this API cross-origin.
+
+   Every custom header the browser sends has to be listed here or the preflight
+   fails and the real request is never made. `authorization` is the one that
+   bit: Clerk attaches it to every dashboard call, and because Railway serves
+   the site and the API from the SAME origin there is no preflight in
+   production — so this was invisible there and broke only in local dev, and
+   would equally break any deployment that hosts the frontend elsewhere. */
 const CORS = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET, POST, OPTIONS",
-  "access-control-allow-headers": "content-type, x-session-id",
+  "access-control-allow-headers": "content-type, authorization, x-session-id, x-delay-ms, x-seq",
 };
 function json(res, code, obj) {
   res.writeHead(code, { "content-type": "application/json", ...CORS });
