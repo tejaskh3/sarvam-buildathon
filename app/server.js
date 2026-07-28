@@ -34,8 +34,10 @@ if (!SARVAM_KEY) {
   process.exit(1);
 }
 
-const SARVAM = "https://api.sarvam.ai";
-const HDRS = { "api-subscription-key": SARVAM_KEY };
+/* Every Sarvam call goes through app/sarvam.js — one place for the timeout,
+   the retry policy and the error shape. See the header of that file for why
+   it exists. */
+const sarvam = require("./sarvam");
 
 // ─── config ───────────────────────────────────────────────────────
 const CFG = {
@@ -223,16 +225,13 @@ function personContext(personId, personName, personLang) {
 
 // ─── memory extraction (structured, parallel to the reply) ────────
 async function extract(userText, agentLastText) {
-  const r = await fetch(`${SARVAM}/v1/chat/completions`, {
-    method: "POST",
-    headers: { ...HDRS, "content-type": "application/json" },
-    body: JSON.stringify({
-      model: CFG.chatModel,
-      temperature: 0.1,
-      max_tokens: 500,
-      reasoning_effort: null,
-      response_format: { type: "json_object" },
-      messages: [
+  const raw = await sarvam.chat({
+    label: "extract",
+    model: CFG.chatModel,
+    temperature: 0.1,
+    maxTokens: 500,
+    json: true,
+    messages: [
         {
           role: "system",
           content: `You are a memory-extraction system for conversations with an elder (speech may be Hindi, English or mixed). Extract only durable personal information. Return ONLY valid JSON in exactly this shape:
@@ -243,12 +242,8 @@ Provenance rules: the agent proposed it and they merely agreed = USER_CONFIRMED;
 Only durable facts (places, people, preferences, life events). For bare acknowledgements like "haan"/"theek hai", return an empty facts list.`,
         },
         { role: "user", content: `Agent's previous turn: "${agentLastText || "(nothing)"}"\n\nElder said: "${userText}"` },
-      ],
-    }),
+    ],
   });
-  if (!r.ok) throw new Error(`extract ${r.status}: ${await r.text()}`);
-  const j = await r.json();
-  const raw = j.choices[0].message.content;
   try {
     const parsed = JSON.parse(raw);
     return { name: parsed.name || null, facts: Array.isArray(parsed.facts) ? parsed.facts : [], open_topic: parsed.open_topic || null };
@@ -259,16 +254,9 @@ Only durable facts (places, people, preferences, life events). For bare acknowle
 }
 
 // ─── sarvam calls ─────────────────────────────────────────────────
-async function stt(wavBuffer) {
-  const form = new FormData();
-  form.append("file", new Blob([wavBuffer], { type: "audio/wav" }), "turn.wav");
-  form.append("model", CFG.sttModel);
-  form.append("mode", CFG.sttMode);
-  const r = await fetch(`${SARVAM}/speech-to-text`, { method: "POST", headers: HDRS, body: form });
-  if (!r.ok) throw new Error(`STT ${r.status}: ${await r.text()}`);
-  const j = await r.json();
-  return { transcript: j.transcript || "", language: j.language_code || null };
-}
+// Thin, named bindings of the product's settings onto app/sarvam.js. The
+// transport concerns — timeout, retry, error shape — live there, not here.
+const stt = (wavBuffer) => sarvam.stt(wavBuffer, { model: CFG.sttModel, mode: CFG.sttMode });
 
 // Bulbul v3 languages — a detected language outside this set falls back to hi-IN
 const BULBUL_LANGS = new Set(["hi-IN", "bn-IN", "en-IN", "gu-IN", "kn-IN", "ml-IN", "mr-IN", "od-IN", "pa-IN", "ta-IN", "te-IN"]);
@@ -276,13 +264,7 @@ const LANG_NAME = { "hi-IN": "Hindi", "mr-IN": "Marathi", "bn-IN": "Bengali", "t
 
 /* One call to Sarvam Translate. */
 async function translateRaw(text, target, source) {
-  const r = await fetch(`${SARVAM}/translate`, {
-    method: "POST",
-    headers: { ...HDRS, "content-type": "application/json" },
-    body: JSON.stringify({ input: text, source_language_code: source, target_language_code: target }),
-  });
-  if (!r.ok) throw new Error(`translate ${r.status}: ${await r.text()}`);
-  return (await r.json()).translated_text;
+  return sarvam.translate({ input: text, source, target });
 }
 
 /* The brand name has to be kept away from Translate, which otherwise renders
@@ -450,45 +432,28 @@ const STOPish = new Set([
 ]);
 
 async function chatOnce(history, context, model) {
-  const r = await fetch(`${SARVAM}/v1/chat/completions`, {
-    method: "POST",
-    headers: { ...HDRS, "content-type": "application/json" },
-    body: JSON.stringify({
-      model: model || CFG.chatModel,
-      temperature: 0.4,
-      max_tokens: 160,
-      // sarvam-30b is a reasoning model; null disables thinking → fast voice turns
-      reasoning_effort: null,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        ...(context ? [{ role: "system", content: context }] : []),
-        ...history,
-      ],
-    }),
+  return sarvam.chat({
+    label: "Chat",
+    model: model || CFG.chatModel,
+    temperature: 0.4,
+    maxTokens: 160,
+    messages: [
+      { role: "system", content: SYSTEM_PROMPT },
+      ...(context ? [{ role: "system", content: context }] : []),
+      ...history,
+    ],
   });
-  if (!r.ok) throw new Error(`Chat ${r.status}: ${await r.text()}`);
-  const j = await r.json();
-  return j.choices[0].message.content.trim();
 }
 
 async function tts(text, lang) {
-  const r = await fetch(`${SARVAM}/text-to-speech`, {
-    method: "POST",
-    headers: { ...HDRS, "content-type": "application/json" },
-    body: JSON.stringify({
-      text,
-      model: CFG.ttsModel,
-      speaker: CFG.speaker,
-      pace: CFG.pace,
-      temperature: CFG.ttsTemperature,
-      target_language_code: BULBUL_LANGS.has(lang) ? lang : CFG.ttsLang,
-      speech_sample_rate: 24000,
-      output_audio_codec: "wav",
-    }),
+  return sarvam.tts({
+    text,
+    model: CFG.ttsModel,
+    speaker: CFG.speaker,
+    pace: CFG.pace,
+    temperature: CFG.ttsTemperature,
+    language: BULBUL_LANGS.has(lang) ? lang : CFG.ttsLang,
   });
-  if (!r.ok) throw new Error(`TTS ${r.status}: ${await r.text()}`);
-  const j = await r.json();
-  return j.audios[0]; // base64 wav
 }
 
 // ─── the ack bank, and why there isn't one ─────────────────────────
@@ -567,20 +532,15 @@ Rules: quotes must appear in the transcript. If the transcript is too short or u
 
 TRANSCRIPT:
 ${text}`;
-  const r = await fetch(`${SARVAM}/v1/chat/completions`, {
-    method: "POST",
-    headers: { ...HDRS, "content-type": "application/json" },
-    body: JSON.stringify({
-      model: "sarvam-105b",
-      temperature: 0.2,
-      max_tokens: 1600,
-      reasoning_effort: null,
-      response_format: { type: "json_object" },
-      messages: [{ role: "user", content: prompt }],
-    }),
+  const raw = await sarvam.chat({
+    label: "scribe report",
+    model: "sarvam-105b",
+    temperature: 0.2,
+    maxTokens: 1600,
+    json: true,
+    timeoutMs: sarvam.LONGFORM_TIMEOUT_MS,
+    messages: [{ role: "user", content: prompt }],
   });
-  if (!r.ok) throw new Error(`scribe report ${r.status}: ${await r.text()}`);
-  const raw = (await r.json()).choices[0].message.content;
   let j;
   try { j = JSON.parse(raw); } catch { j = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1)); }
   const arr = (x) => (Array.isArray(x) ? x : []);
@@ -599,16 +559,14 @@ async function generateBriefing(personId, personName) {
   const facts = db.memoriesFor(personId);
   const loop = db.openLoopFor(personId);
   const avoided = db.inspectMemories(personId).filter((m) => m.safe_to_use === 0 || m.status === "UNRESOLVED");
-  const r = await fetch(`${SARVAM}/v1/chat/completions`, {
-    method: "POST",
-    headers: { ...HDRS, "content-type": "application/json" },
-    body: JSON.stringify({
-      model: CFG.chatModel,
-      temperature: 0.3,
-      max_tokens: 600,
-      reasoning_effort: null,
-      response_format: { type: "json_object" },
-      messages: [
+  const raw = await sarvam.chat({
+    label: "briefing",
+    model: CFG.chatModel,
+    temperature: 0.3,
+    maxTokens: 600,
+    json: true,
+    timeoutMs: sarvam.LONGFORM_TIMEOUT_MS,
+    messages: [
         {
           role: "system",
           content: `You prepare a 60-second pre-visit briefing for the family of an elder, from their recorded conversation memories. Return ONLY JSON:
@@ -622,12 +580,9 @@ Write values in warm, simple English. Use ONLY the provided facts — invent not
           role: "user",
           content: `Elder: ${personName}\nKnown facts:\n${facts.map((f) => `- ${f.statement} (${f.canonical})`).join("\n")}\nUnfinished story: ${loop ? loop.topic : "none"}\nAvoid/unresolved areas: ${avoided.map((m) => m.category).join(", ") || "none"}`,
         },
-      ],
-    }),
+    ],
   });
-  if (!r.ok) throw new Error(`briefing ${r.status}`);
-  const j = await r.json();
-  const b = JSON.parse(j.choices[0].message.content);
+  const b = JSON.parse(raw);
   // models sometimes echo schema placeholders — scrub anything template-shaped
   const junk = (v) => !v || /if any|else null|^none$|^null$/i.test(String(v).trim());
   b.ask_about = (b.ask_about || []).filter((x) => !junk(x));
@@ -640,16 +595,14 @@ Write values in warm, simple English. Use ONLY the provided facts — invent not
 async function generateMemoir(personId, personName) {
   const facts = db.memoriesFor(personId);
   if (!facts.length) return { title: "", paragraphs: [] };
-  const r = await fetch(`${SARVAM}/v1/chat/completions`, {
-    method: "POST",
-    headers: { ...HDRS, "content-type": "application/json" },
-    body: JSON.stringify({
-      model: "sarvam-105b", // long-form synthesis — the bigger model earns its keep here
-      temperature: 0.4,
-      max_tokens: 1200,
-      reasoning_effort: null,
-      response_format: { type: "json_object" },
-      messages: [
+  const raw = await sarvam.chat({
+    label: "memoir",
+    model: "sarvam-105b", // long-form synthesis — the bigger model earns its keep here
+    temperature: 0.4,
+    maxTokens: 1200,
+    json: true,
+    timeoutMs: sarvam.LONGFORM_TIMEOUT_MS,
+    messages: [
         {
           role: "system",
           content: `You write a short memoir chapter from an elder's own recorded statements. HARD RULES:
@@ -662,12 +615,9 @@ Return ONLY JSON: {"title": "chapter title in Hindi", "paragraphs": [{"text": ".
           role: "user",
           content: `Elder: ${personName}\nSource facts:\n${facts.map((f, i) => `${i + 1}. ${f.statement} (${f.canonical})`).join("\n")}`,
         },
-      ],
-    }),
+    ],
   });
-  if (!r.ok) throw new Error(`memoir ${r.status}`);
-  const j = await r.json();
-  const out = JSON.parse(j.choices[0].message.content);
+  const out = JSON.parse(raw);
   // attach real memory rows to each cited source for traceability
   out.paragraphs = (out.paragraphs || []).map((p) => ({
     ...p,

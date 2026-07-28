@@ -219,12 +219,72 @@ Env: `CLERK_PUBLISHABLE_KEY` (server) + `VITE_CLERK_PUBLISHABLE_KEY` (build). Un
 `be/registration` → `ui/signup` → deploy → `be/cst` → `ui/pricing+theme` → deploy → `be/reminders` → `be/scribe` → `ui/scribe+stats` → `be/stats-hardening` → final deploy.
 
 ## 6. WhatsApp outreach message (teammate-2, tonight)
-> Namaste! We're a Bangalore team building **Yaadein** — a free daily voice companion for elderly parents, in their own language (Hindi/Kannada/Tamil/Marathi + 7 more). It chats with them for 10 minutes a day about their life and memories — never tests, never corrects — and the family gets a weekly picture of how they're doing. We're inviting 25 founding families this week (free). 2-minute setup, works in any browser: <URL>. I'll personally help you onboard — reply here. 🙏
 
-## 7. Pricing copy (Tejas)
-- **Founding Family — Free** · daily companion, family dashboard, memory book. "First 25 families, forever-free founding badge."
-- **Family — ₹1,499/mo** · everything + weekly WhatsApp digest, priority voices, photo conversations. *"₹50 a day. A trained memory-care attendant costs ₹40,000 a month — and doesn't speak her language."*
-- **Care Centres — ₹600/seat/mo** · Session Scribe, member dashboards, white-label family reports. "Contact us" → WhatsApp link.
+**Check `/api/waitlist` before you send this.** As of 28 Jul, `founding_left` is
+**0** — all ten free-forever seats went in the first day. So the copy below no
+longer offers one, because the first thing anyone does is open the link and see
+`0 left` on that card. What is still true: **38 of 50 seats remain, free for
+three months, then ₹1,499/mo, and we ask before charging anyone.**
+
+That reads better than the original offer anyway — "the ten free-forever seats
+went in a day" is scarcity you can prove. Keep the *count* out of the message
+body though: the page has a live counter, and a hardcoded "38 left" is stale
+within the hour.
+
+    curl -s https://sarvam-buildathon-production.up.railway.app/api/waitlist
+
+Link: `https://sarvam-buildathon-production.up.railway.app/#/waitlist`
+
+**a. One-to-one (the one that actually converts — send it person by person)**
+
+> Namaste 🙏 We're a small Bangalore team, and we've built **Yaadein** — someone
+> for your parent to talk to who remembers yesterday.
+>
+> It calls them by name and chats for ten minutes a day about their own life, in
+> their own language (Hindi, Kannada, Tamil, Telugu, Marathi, Bengali and 5 more).
+> It never tests them and never corrects them. A few days later it says "you
+> mentioned Pune — what do you like about Pune?" and the conversation carries on
+> where it left off. Everything they say becomes a memory book for the family,
+> and you get a picture of how they're actually doing.
+>
+> We opened 50 seats this week. The ten free-forever ones went on the first day,
+> but the rest are free for three months, and we ask you before we ever charge
+> you. No card to start.
+>
+> Your parent doesn't install anything or sign in to anything. You send them one
+> link and they tap a circle and talk. Setup takes two minutes:
+> https://sarvam-buildathon-production.up.railway.app/#/waitlist
+>
+> I'll set it up with you myself on a call if that's easier — just reply here.
+
+**b. Community groups (Caregiver Saathi, "Dementia Care in India" FB groups, DIA
+support groups)**
+
+A wall of text in a support group reads as an ad and gets removed. Lead with the
+problem the group already talks about, keep it to four lines, and say who you are.
+
+> Hi all — I'm Tejas, from a small team in Bangalore. My own grandmother stopped
+> recognising the house she'd lived in for forty years, and the hardest part was
+> that nobody had ten minutes a day to just *talk* to her about her own life.
+>
+> So we built Yaadein: a voice companion that talks with elders in their own
+> language, remembers what they said last time, and quietly tracks whether the
+> recall came back. It's free for three months for the first 50 families, no card,
+> and nothing for the elder to install.
+>
+> If it's useful to anyone here: https://sarvam-buildathon-production.up.railway.app/#/waitlist
+> Happy to answer anything, and happy to be told it's not welcome here — mods,
+> just say so and I'll delete it.
+
+**Do not claim** in either message: WhatsApp digests (not built), cancel-by-
+WhatsApp (not built), a phone call to the elder (the app notification is planned,
+not shipped), or any diagnosis. The word "dementia" stays out of the B2C message
+— 90% of Indian cases are undiagnosed and the family does not use that word yet.
+
+## 7. Pricing copy (Tejas) — mirrors the live cards in `sections/Pricing.tsx`
+- **Founding Family — Free** · a conversation every day in their own language, the family dashboard, their memory book. "For the first ten families to claim a seat. Free forever, with a founding badge — we want your feedback more than your money."
+- **Family — ₹0 for 3 months, then ₹1,499/mo** · everything above + a weekly digest, priority voices, photo conversations, recall trends the doctor can read. Ribbon: *Not charging yet*. *"₹50 a day, once it starts. A trained memory-care attendant costs ₹40,000 a month — and doesn't speak their language."* Closing line: "No contract, and no card to start."
+- **Care Centres — ₹600/seat/mo** · Session Scribe, member dashboards, white-label family reports, "your psychologist stops hand-writing progress notes". CTA is **Set up your centre** → Dodo checkout with the resident count in the URL, *not* a contact link (sending a care home to the families waitlist offers them the wrong product).
 
 ## 8. Pilot LOI (print 3)
 One page: *"<Centre> agrees to a free 4-week pilot of Yaadein with up to 10 members (with family consent), including AI companion sessions and Session Scribe documentation. Success metrics: session completion, staff time saved on documentation, family satisfaction. <Centre> intends to evaluate a paid per-seat subscription following a successful pilot."* Signature lines + consent clause for audio recording.
