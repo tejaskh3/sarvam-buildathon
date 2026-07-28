@@ -15,6 +15,7 @@ const checkin = require("./checkin");
 const email = require("./email");
 const {
   similarity, openQuestionAbout, dedupeParagraphs, dropDanglingRecall, stripFillers,
+  hasModelPlaceholder,
 } = require("./voice");
 const { SYSTEM_PROMPT, THEMES, nowInIndia, orientationLine } = require("./prompts");
 
@@ -37,7 +38,17 @@ const HDRS = { "api-subscription-key": SARVAM_KEY };
 
 // ─── config ───────────────────────────────────────────────────────
 const CFG = {
-  chatModel: "sarvam-30b",
+  // Keep these explicit: Sarvam's API defaults can change. The flagship model
+  // materially improves instruction-following; hidden reasoning is opt-in
+  // because even "low" added ~11s in a local voice-turn probe.
+  chatModel: process.env.SARVAM_CHAT_MODEL || "sarvam-105b",
+  chatReasoningEffort: ["low", "medium", "high"].includes(process.env.SARVAM_CHAT_REASONING_EFFORT)
+    ? process.env.SARVAM_CHAT_REASONING_EFFORT
+    : null,
+  chatMaxTokens: Math.max(256, Number(process.env.SARVAM_CHAT_MAX_TOKENS) || 512),
+  // Structured extraction is background work; reserve the flagship model for
+  // the answer the elder actually hears.
+  utilityModel: process.env.SARVAM_UTILITY_MODEL || "sarvam-30b",
   ttsModel: "bulbul:v3",
   // soothing female voices to audition: simran, ritu, roopa, shruti, kavitha
   speaker: "simran",
@@ -151,14 +162,19 @@ function sarvamError(e) {
 
 // Build the per-person context block injected as a second system message.
 // Phase 3: known facts + the open loop + revisit-scheduler picks for today.
+function identityContext(personName, personLang) {
+  let ctx = `Ye ${personName} ji hain — inka naam pakka maloom hai. Inhe hamesha "${personName} ji" kaho; naam dobara KABHI mat poochho.`;
+  if (personLang && LANG_NAME[personLang]) {
+    ctx += `\nInki bhasha: ${LANG_NAME[personLang]} — HAMESHA isi bhasha mein, iski native script mein jawab do.`;
+  }
+  return ctx;
+}
+
 function personContext(personId, personName, personLang) {
   const facts = db.memoriesFor(personId);
   const loop = db.openLoopFor(personId);
   if (!facts.length && !loop) return null;
-  let ctx = `Ye ${personName} ji hain — inse pehle bhi baat hui hai.`;
-  if (personLang && LANG_NAME[personLang]) {
-    ctx += `\nInki bhasha: ${LANG_NAME[personLang]} — HAMESHA isi bhasha mein, iski native script mein jawab do.`;
-  }
+  let ctx = `${identityContext(personName, personLang)}\nInse pehle bhi baat hui hai.`;
   if (facts.length) {
     ctx += `\nJaani hui baatein (inhone khud batayi thin — "Aapne bataya tha ki..." kah kar istemal karo, pareeksha kabhi mat lo):\n`;
     ctx += facts.slice(0, 12).map((f) => `- ${f.statement}`).join("\n");
@@ -178,7 +194,7 @@ async function extract(userText, agentLastText) {
     method: "POST",
     headers: { ...HDRS, "content-type": "application/json" },
     body: JSON.stringify({
-      model: CFG.chatModel,
+      model: CFG.utilityModel,
       temperature: 0.1,
       max_tokens: 500,
       reasoning_effort: null,
@@ -202,7 +218,15 @@ Only durable facts (places, people, preferences, life events). For bare acknowle
   const raw = j.choices[0].message.content;
   try {
     const parsed = JSON.parse(raw);
-    return { name: parsed.name || null, facts: Array.isArray(parsed.facts) ? parsed.facts : [], open_topic: parsed.open_topic || null };
+    const facts = Array.isArray(parsed.facts)
+      ? parsed.facts.filter((fact) => {
+          const words = String(fact?.statement || "").trim().split(/\s+/).filter(Boolean);
+          // "Amen", "haan", etc. are not durable memories merely because the
+          // extractor labelled them `other`.
+          return !(fact?.category === "other" && words.length <= 2);
+        })
+      : [];
+    return { name: parsed.name || null, facts, open_topic: parsed.open_topic || null };
   } catch {
     console.warn(`[extract] unparseable JSON: ${String(raw).slice(0, 200)}`);
     return { name: null, facts: [], open_topic: null };
@@ -341,9 +365,10 @@ async function chatOnce(history, context, model) {
     body: JSON.stringify({
       model: model || CFG.chatModel,
       temperature: 0.4,
-      max_tokens: 160,
-      // sarvam-30b is a reasoning model; null disables thinking → fast voice turns
-      reasoning_effort: null,
+      // If enabled, reasoning shares this budget with the visible answer. The
+      // prompt still caps spoken output at 35 words.
+      max_tokens: CFG.chatMaxTokens,
+      reasoning_effort: CFG.chatReasoningEffort,
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
         ...(context ? [{ role: "system", content: context }] : []),
@@ -353,7 +378,9 @@ async function chatOnce(history, context, model) {
   });
   if (!r.ok) throw new Error(`Chat ${r.status}: ${await r.text()}`);
   const j = await r.json();
-  return j.choices[0].message.content.trim();
+  const reply = String(j.choices?.[0]?.message?.content || "").trim();
+  if (!reply) throw new Error("Chat returned an empty response");
+  return reply;
 }
 
 async function tts(text, lang) {
@@ -596,11 +623,18 @@ async function handleTurn(sess, sessionId, transcript, audioFile, delayMs, { syn
       sess.personName = person.name;
       db.linkSession(sessionId, person.id);
       if (!sess.lang && BULBUL_LANGS.has(person.lang)) sess.lang = person.lang;
-      sess.context = personContext(person.id, person.name, sess.lang);
-      if (returning && sess.context) sess.contract.RESUMED = true;
-      if (returning && sess.context) {
+      const recallContext = personContext(person.id, person.name, sess.lang);
+      // A new person has no memories yet, but the model must still retain the
+      // name discovered in this exact turn.
+      sess.context = recallContext || identityContext(person.name, sess.lang);
+      if (returning && recallContext) sess.contract.RESUMED = true;
+      if (returning && recallContext) {
         // the recognition moment: this exact turn must SHOW the memory (B1)
         sess.recognitionNudge = `ABHI is turn mein: (1) pehli pankti — garam swagat, jaise purane parichit ka: "${person.name} ji, namaste! Achha laga aap phir mile." (2) doosri pankti — unke NAAM ke alawa "jaani hui baaton" mein se EK baat: "Aapne bataya tha ki..." (3) usi baat par ek naram, bhavna-wala sawaal. Agar adhoora vishay diya hai, usse shuru karo.`;
+      } else {
+        // Their first clear name is a conversational transition, not a reason
+        // to ask it again or fall back to a generic "how are you?".
+        sess.recognitionNudge = `ABHI unhone bataya ki naam "${person.name}" hai. "${person.name} ji" keh kar garamjoshi se swagat karo, phir bachpan ka ghar ya kisi tyohar jaise DO thos vishay pesh karo. Naam dobara ya generic "aaj aap kaise hain?" mat poochho.`;
       }
       console.log(`[person] ${returning ? "returning" : "new"}: ${person.name} (#${person.id})${sess.context ? " — context loaded" : ""}`);
     }
@@ -631,15 +665,36 @@ const themeLine = sess.theme && !cueNudge && sess.contract.ENGAGED.turns <= 5
   const remLine = sess.reminder && !sess.reminderAcked && !cueNudge && sess.contract.ENGAGED.turns >= 2
     ? `\n\nPARIVAAR KI EK BAAT (is baat-cheet mein SIRF EK BAAR, sahaj tarike se, apnapan se — hukum ki tarah nahi): "${sess.reminder.text}". Agar pehle se keh chuki ho toh dobara mat kaho.`
     : "";
-  const turnContext = sess.context
-    ? sess.context
-      + (sess.recognitionNudge ? `\n\n${sess.recognitionNudge}` : "")
-      + (cueNudge ? `\n\n${cueNudge}` : "")
-      + themeLine
-      + remLine
-    : null;
+  const contextParts = [
+    sess.context,
+    !sess.personId
+      ? `ABHI inka naam maloom NAHI hai. Extractor ko unki aakhri baat mein saaf naam nahi mila, isliye us baat ko naam maan kar "[unki baat] ji" kehna bhi MANA hai. Narmi se naam dobara poochho. [naam], <name> ya koi bhi placeholder bolna SAKHT MANA hai.`
+      : null,
+    sess.recognitionNudge,
+    cueNudge,
+    themeLine,
+    remLine,
+  ].filter(Boolean);
+  const turnContext = contextParts.length ? contextParts.join("\n\n") : null;
   sess.recognitionNudge = null; // one turn only
   let reply = await chatNoEcho(sess.history, turnContext, turnModel);
+  if (hasModelPlaceholder(reply)) {
+    console.warn(`[guard] model placeholder blocked: "${reply}"`);
+    reply = await chatNoEcho(
+      sess.history,
+      `${turnContext || ""}\n\nPICHHLA JAWAB GALAT THA KYONKI USME PLACEHOLDER THA. Sirf tayyar, prakritik bolne wala vaakya do. ${
+        sess.personName
+          ? `Naam "${sess.personName} ji" hai; naam dobara mat poochho.`
+          : "Naam abhi maloom nahi; narmi se naam poochho."
+      }`,
+      "sarvam-105b"
+    );
+    if (hasModelPlaceholder(reply)) {
+      reply = sess.personName
+        ? `${sess.personName} ji, aapne abhi jo kaha usmein sabse pyara hissa kaunsa laga?`
+        : "Maaf kijiye, main naam theek se sun nahi paayi. Main aapko kis naam se bulaoon?";
+    }
+  }
   // A cue must not contain the answer. The model both prefaces hints with
   // "Aapne bataya tha ki <the fact>" AND sometimes just states the fact
   // outright, so prompt rules aren't enough: compare the hint against what

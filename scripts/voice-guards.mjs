@@ -9,7 +9,7 @@
    The guards now live in app/voice.js, which imports cleanly. */
 import { createRequire } from "node:module";
 
-const { stripFillers, dropDanglingRecall, dedupeParagraphs } = createRequire(import.meta.url)(
+const { stripFillers, dropDanglingRecall, dedupeParagraphs, hasModelPlaceholder } = createRequire(import.meta.url)(
   "../app/voice.js"
 );
 
@@ -87,6 +87,13 @@ eq(
   dedupeParagraphs("Wahan subah kaisi lagti thi?\n\nWahan subah kaisi lagti thi?"),
   "Wahan subah kaisi lagti thi?"
 );
+
+console.log("\nmodel output guards\n");
+
+eq("Hindi placeholder is caught", hasModelPlaceholder("Namaste [naam] ji."), true);
+eq("English angle placeholder is caught", hasModelPlaceholder("Hello <name>."), true);
+eq("template-brace placeholder is caught", hasModelPlaceholder("Namaste {{ naam }} ji."), true);
+eq("a real name is allowed", hasModelPlaceholder("Namaste Amey ji."), false);
 
 console.log(`\n${fail === 0 ? "🎉" : "🔧"} ${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

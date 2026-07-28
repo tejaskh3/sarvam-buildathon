@@ -45,6 +45,11 @@ function dedupeParagraphs(reply) {
   return kept.join("\n\n");
 }
 
+// Template markers sound especially broken once synthesized. Models can copy
+// them from instructions even when told not to, so they need a code-level gate.
+const MODEL_PLACEHOLDER = /(?:\[\s*(?:naam|name)\s*\]|<\s*(?:naam|name)\s*>|\{\{\s*(?:naam|name)\s*\}\})/i;
+const hasModelPlaceholder = (reply) => MODEL_PLACEHOLDER.test(String(reply));
+
 // The model sometimes emits the recall phrase with nothing after it —
 // "Aapne bataya tha ki..." — which sounds like Yaadein itself forgot
 // mid-sentence: the exact impression we must never give. Drop the stub.
@@ -91,6 +96,7 @@ function stripFillers(reply) {
 
 module.exports = {
   similarity, openQuestionAbout, dedupeParagraphs, dropDanglingRecall, stripFillers,
+  hasModelPlaceholder,
   // exported for the tests, which check the regexes directly
-  FILLER, FILLER_ONLY, FILLER_LEAD,
+  FILLER, FILLER_ONLY, FILLER_LEAD, MODEL_PLACEHOLDER,
 };
