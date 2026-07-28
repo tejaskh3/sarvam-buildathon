@@ -1,26 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Reveal, Section, SectionHead } from '../components/Primitives'
 import { getStoredPhone } from '../components/PhoneGate'
-
-/* ------------------------------------------------------------------
-   Pricing. Two things here come from the server rather than the bundle,
-   and for the same reason: GET /api/plans reads them out of the
-   environment, so they can change on Railway and go live on the next
-   page load with no rebuild.
-
-   · the checkout links (Dodo)     — docs/07-keys-and-accounts.md §1
-   · the first-fifty cohort terms  — WAITLIST_* env vars
-
-   We are not charging yet: Dodo KYC is still under review. That used to
-   render as a disabled "Coming this week" card, which reads as an
-   unfinished product. It now reads as the offer — ₹0 for three months,
-   fifty seats, ten of them free forever — which is both truer and the
-   thing we actually want people to do.
-   ------------------------------------------------------------------ */
-
-const API =
-  (import.meta.env.VITE_API_BASE as string | undefined) ??
-  (import.meta.env.DEV ? 'http://localhost:3000' : '')
+import { API } from '../lib/api'
 
 type Plan = {
   key: string

@@ -3,6 +3,7 @@ import { PhoneGate, clearStoredPhone, getStoredPhone } from '../components/Phone
 import { AccountButton, RequireFamilySignIn } from '../components/Auth'
 import { authFetch, clerkConfigured } from '../lib/auth'
 import { Logo } from '../components/Logo'
+import { API } from '../lib/api'
 
 /* ------------------------------------------------------------------
    Family Dashboard — the caregiver's side of Yaadein.
@@ -12,11 +13,6 @@ import { Logo } from '../components/Logo'
    original audio · photo uploads that become tomorrow's conversation.
    The elder never sees this page; their only surface is the orb.
    ------------------------------------------------------------------ */
-
-/* ⚠ same-origin in production — never hardcode localhost (see TryPage) */
-const API =
-  (import.meta.env.VITE_API_BASE as string | undefined) ??
-  (import.meta.env.DEV ? 'http://localhost:3000' : '')
 
 type Person = { id: number; name: string; memory_count: number; lang: string | null }
 type Memory = {

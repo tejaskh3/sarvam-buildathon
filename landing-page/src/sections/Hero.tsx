@@ -1,10 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Reveal } from '../components/Primitives'
 import { SessionDemo } from './SessionDemo'
-
-const API =
-  (import.meta.env.VITE_API_BASE as string | undefined) ??
-  (import.meta.env.DEV ? 'http://localhost:3000' : '')
+import { API } from '../lib/api'
 
 const stats = [
   { value: 'One orb', label: 'the entire interface' },

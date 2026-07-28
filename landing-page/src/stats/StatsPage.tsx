@@ -1,15 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Logo } from '../components/Logo'
-
-/* ------------------------------------------------------------------
-   Live usage — the honest counter. Public on purpose: anyone can see
-   exactly how much real conversation has happened. Aggregates only,
-   never a name.
-   ------------------------------------------------------------------ */
-
-const API =
-  (import.meta.env.VITE_API_BASE as string | undefined) ??
-  (import.meta.env.DEV ? 'http://localhost:3000' : '')
+import { API } from '../lib/api'
 
 type Stats = {
   families: number; elders: number; sessions: number; minutes_talked: number

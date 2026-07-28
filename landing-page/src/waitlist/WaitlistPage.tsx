@@ -8,22 +8,7 @@ import { Confetti } from '../components/Confetti'
 import { OpenSignIn } from '../components/Auth'
 import { LangSelect } from '../components/LangSelect'
 import { authFetch, clerkConfigured } from '../lib/auth'
-
-/* ------------------------------------------------------------------
-   The first-fifty waitlist.
-
-   Dodo KYC is still under review, so we cannot take money yet. This page
-   turns that into the offer instead of apologising for it: fifty seats,
-   all of them free for three months, ten of them free forever.
-
-   Everything the page promises — seat count, how many are free, how many
-   months — comes from GET /api/waitlist, so the cohort can be resized in
-   Railway without a rebuild. Same rule as Pricing.
-   ------------------------------------------------------------------ */
-
-const API =
-  (import.meta.env.VITE_API_BASE as string | undefined) ??
-  (import.meta.env.DEV ? 'http://localhost:3000' : '')
+import { API } from '../lib/api'
 
 type Counts = {
   seats: number

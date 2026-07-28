@@ -4,21 +4,13 @@ import { SmallWebRTCTransport } from '@pipecat-ai/small-webrtc-transport'
 import { Orb, VoiceLabel, type Voice } from '../components/Orb'
 import { PhoneGate, clearStoredPhone, getStoredPhone } from '../components/PhoneGate'
 import { Logo } from '../components/Logo'
+import { API } from '../lib/api'
 
 /* ------------------------------------------------------------------
    Try Yaadein — a continuous Pipecat WebRTC voice session.
    The microphone stays live between turns, so speech can naturally
    interrupt the agent and no audio has to be recorded/uploaded first.
    ------------------------------------------------------------------ */
-
-/* ⚠ DO NOT hardcode localhost as the production fallback.
-   In production the Node server serves this page AND /api/* on the same
-   origin, so API must be '' (relative). localhost is for `vite dev` only —
-   an unconditional localhost fallback breaks the deployed site for
-   everyone except the machine it was built on. */
-const API =
-  (import.meta.env.VITE_API_BASE as string | undefined) ??
-  (import.meta.env.DEV ? 'http://localhost:3000' : '')
 
 const REALTIME =
   (import.meta.env.VITE_REALTIME_URL as string | undefined) ??
