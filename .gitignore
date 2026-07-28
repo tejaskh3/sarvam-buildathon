@@ -1,4 +1,6 @@
 node_modules/
+.venv/
+__pycache__/
 .env
 app/.env
 # Vite's local overrides. VITE_* values are compiled into the browser bundle, so

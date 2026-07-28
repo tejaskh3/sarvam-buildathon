@@ -726,7 +726,7 @@ Return ONLY JSON: {"title": "chapter title in Hindi", "paragraphs": [{"text": ".
 // is recognized in the same reply ("Aapne bataya tha ki aap Pune mein...").
 // Known person: extraction runs in PARALLEL with the reply — memory
 // capture never adds latency to the conversation.
-async function handleTurn(sess, sessionId, transcript, audioFile, delayMs) {
+async function handleTurn(sess, sessionId, transcript, audioFile, delayMs, { synthesizeAudio = true } = {}) {
   const lastAgent = sess.history.filter((m) => m.role === "assistant").at(-1)?.content;
   sess.history.push({ role: "user", content: transcript });
   sess.contract.ENGAGED.turns++;
@@ -819,8 +819,8 @@ const themeLine = sess.theme && !cueNudge && sess.contract.ENGAGED.turns <= 5
   sess.history.push({ role: "assistant", content: reply });
 
   const t2 = Date.now();
-  const audio = await tts(reply, sess.lang);
-  const tTts = Date.now() - t2;
+  const audio = synthesizeAudio ? await tts(reply, sess.lang) : null;
+  const tTts = synthesizeAudio ? Date.now() - t2 : 0;
 
   // persist what the extractor found (after reply — never blocks the voice)
   extractP.then((ext) => {
@@ -915,8 +915,11 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && req.url === "/api/session/start") {
       const id = crypto.randomUUID();
       let phone = null;
+      let realtime = false;
       try {
-        phone = String(JSON.parse((await readBody(req)).toString() || "{}").phone || "").trim();
+        const body = JSON.parse((await readBody(req)).toString() || "{}");
+        phone = String(body.phone || "").trim();
+        realtime = body.realtime === true;
       } catch { /* no body */ }
       if (!phoneOk(phone)) {
         return json(res, 403, { error: "phone_not_allowed" });
@@ -1023,9 +1026,12 @@ const server = http.createServer(async (req, res) => {
       sess.history.push({ role: "assistant", content: opener });
       sess.startedAt = sess.lastSeen = Date.now();
       sessions.set(id, sess);
-      const audio = await tts(opener, sess.lang);
+      // Pipecat speaks the opener over its streaming TTS connection. The
+      // existing REST caller still receives the complete WAV as before.
+      const audio = realtime ? null : await tts(opener, sess.lang);
       json(res, 200, {
         sessionId: id, text: opener, audio, person: sess.personName,
+        language: realtime ? (sess.lang || CFG.ttsLang) : undefined,
         theme: sess.theme ? { key: sess.theme, title: THEMES[sess.theme].title, title_en: THEMES[sess.theme].title_en } : null,
         // full family context rides along so the UI can caption the photo:
         // whose moment it is, where, when — never a bare unexplained image
@@ -1037,6 +1043,59 @@ const server = http.createServer(async (req, res) => {
           year: photo.year || "",
           people: (() => { try { return JSON.parse(photo.people_json || "[]").map((x) => x.name + (x.relation ? ` (${x.relation})` : "")); } catch { return []; } })(),
         } : null,
+      });
+      return;
+    }
+
+    // Pipecat has already streamed and transcribed this turn. Route its final
+    // transcript through the exact same conversation/memory/safety pipeline,
+    // but let Pipecat stream Bulbul audio back over WebRTC.
+    if (req.method === "POST" && req.url === "/api/realtime/turn") {
+      const id = req.headers["x-session-id"];
+      const sess = sessions.get(id);
+      if (!sess) return json(res, 400, { error: "unknown_session", message: "That conversation has ended." });
+      sess.lastSeen = Date.now();
+
+      const body = JSON.parse((await readBody(req)).toString() || "{}");
+      const transcript = String(body.transcript || "").trim();
+      if (!transcript) return json(res, 200, { transcript: "", text: "", note: "silence" });
+
+      /* Same rule as the REST turn below: the shared demo number adapts within
+         a session and forgets afterwards, so one visitor answering in Tamil
+         cannot leave the next Hindi visitor being spoken to in Tamil. A
+         family's own number still remembers. */
+      const language = String(body.language || "").trim();
+      if (BULBUL_LANGS.has(language) && language !== "en-IN") {
+        sess.lang = language;
+        if (sess.personId && sess.phone !== TEST_PHONE) db.setPersonLang(sess.personId, language);
+      }
+
+      let audioFile = null;
+      if (typeof body.audio === "string" && body.audio.length <= 14_000_000) {
+        const wav = Buffer.from(body.audio, "base64");
+        if (wav.length >= 44 && wav.subarray(0, 4).toString() === "RIFF" &&
+            wav.subarray(8, 12).toString() === "WAVE") {
+          audioFile = `${id.slice(0, 8)}-${sess.turn++}.wav`;
+          fs.writeFileSync(path.join(db.DATA_DIR, "audio", audioFile), wav);
+        }
+      }
+
+      const delayMs = Number(body.delayMs);
+      const out = await handleTurn(
+        sess,
+        id,
+        transcript,
+        audioFile,
+        Number.isFinite(delayMs) ? Math.max(0, Math.round(delayMs)) : null,
+        { synthesizeAudio: false }
+      );
+      console.log(`[realtime-turn] chat=${out.tChat}ms | "${transcript}" → "${out.reply}"`);
+      json(res, 200, {
+        transcript,
+        text: out.reply,
+        person: sess.personName,
+        language: sess.lang || CFG.ttsLang,
+        contract: sess.contract,
       });
       return;
     }
