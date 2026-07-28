@@ -142,7 +142,19 @@ export function TryPageRest() {
         body: wav,
       })
       const j = await r.json()
-      if (j.error) throw new Error(j.error)
+      /* A restart or a deploy wipes the in-memory session map, so the server
+         answers `unknown_session`. This used to leave sessionRef set, which
+         made every further tap re-send to the same dead session and get the
+         same error for ever — the elder's only way out was reloading the page,
+         which is exactly what this person cannot be asked to do. Clearing it
+         means the next tap opens a fresh conversation.
+
+         j.message, not j.error: the server writes real sentences for the
+         failures it knows about ("we're topping up our voice service"), and
+         throwing the CODE discarded all of them and fell through to the
+         generic fallback. */
+      if (j.error === 'unknown_session') sessionRef.current = null
+      if (j.error) throw new Error(j.message || j.error)
       if (!j.transcript) {
         setState('idle')
         return
