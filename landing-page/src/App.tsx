@@ -11,6 +11,7 @@ import { Footer } from './sections/Footer'
 import { TryPage } from './try/TryPage'
 import { FamilyPage } from './family/FamilyPage'
 import { StatsPage } from './stats/StatsPage'
+import { WaitlistPage } from './waitlist/WaitlistPage'
 
 export default function App() {
   const [hash, setHash] = useState(window.location.hash)
@@ -26,6 +27,7 @@ export default function App() {
   if (route === '#/try') return <TryPage />
   if (route === '#/family') return <FamilyPage />
   if (route === '#/stats') return <StatsPage />
+  if (route === '#/waitlist') return <WaitlistPage />
 
   return (
     <>

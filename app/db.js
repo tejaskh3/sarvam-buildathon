@@ -107,6 +107,30 @@ CREATE TABLE IF NOT EXISTS webhook_events (
 );
 `);
 
+// The first-fifty waitlist. A seat is a numbered promise, not a payment: the
+// whole cohort is free for three months and ten of them never pay at all.
+//
+// Two UNIQUE columns, both nullable, is deliberate. SQLite treats every NULL as
+// distinct, so the pair acts as one idempotency key that follows whichever
+// identity we actually have: owner_id when Clerk is on, email when it isn't.
+// A family that submits twice gets their original seat back either way, which
+// matters more than usual here — the seat number is the thing we promised them.
+db.exec(`
+CREATE TABLE IF NOT EXISTS waitlist (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  owner_id TEXT UNIQUE,
+  email TEXT UNIQUE,
+  name TEXT,
+  elder_name TEXT,
+  language TEXT,
+  phone TEXT,
+  note TEXT,
+  seat INTEGER,
+  tier TEXT DEFAULT 'seat',
+  created_at TEXT DEFAULT (datetime('now'))
+);
+`);
+
 // Reminders the family sets, woven into conversation — never an alarm.
 // At most one per session; an acknowledgment bumps ack_count so the family
 // can see adherence without anyone being nagged.
@@ -539,6 +563,59 @@ module.exports = {
     return db.prepare(
       "SELECT event_type, status, amount, currency, created_at FROM payments WHERE phone = ? ORDER BY created_at DESC LIMIT 20"
     ).all(String(phone));
+  },
+
+  // ── waitlist ──
+  // Seat numbers are handed out here and never reused. No transaction: node:sqlite
+  // is synchronous and Node is single-threaded, so nothing can interleave between
+  // the MAX(seat) read and the INSERT below.
+  joinWaitlist({ owner_id, email, name, elder_name, language, phone, note, founding = 10 }) {
+    const oid = owner_id || null;
+    const mail = (email || "").trim().toLowerCase() || null;
+
+    const existing =
+      (oid && db.prepare("SELECT * FROM waitlist WHERE owner_id = ?").get(oid)) ||
+      (mail && db.prepare("SELECT * FROM waitlist WHERE email = ?").get(mail)) ||
+      null;
+
+    // Someone coming back to finish the form keeps the seat they were given.
+    // Only fill blanks — a second submit must never wipe details we already hold.
+    if (existing) {
+      db.prepare(
+        `UPDATE waitlist SET
+           owner_id   = COALESCE(?, owner_id),
+           email      = COALESCE(?, email),
+           name       = COALESCE(NULLIF(?, ''), name),
+           elder_name = COALESCE(NULLIF(?, ''), elder_name),
+           language   = COALESCE(NULLIF(?, ''), language),
+           phone      = COALESCE(NULLIF(?, ''), phone),
+           note       = COALESCE(NULLIF(?, ''), note)
+         WHERE id = ?`
+      ).run(oid, mail, name || "", elder_name || "", language || "", phone || "", note || "", existing.id);
+      return { seat: existing.seat, tier: existing.tier, already: true };
+    }
+
+    // MAX, not COUNT: removing a test row must not hand the next family a
+    // seat number someone else has already been told is theirs.
+    const seat = (db.prepare("SELECT MAX(seat) m FROM waitlist").get().m || 0) + 1;
+    const tier = seat <= founding ? "founding" : "seat";
+    db.prepare(
+      `INSERT INTO waitlist (owner_id, email, name, elder_name, language, phone, note, seat, tier)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(oid, mail, name || null, elder_name || null, language || null, phone || null, note || null, seat, tier);
+    return { seat, tier, already: false };
+  },
+
+  waitlistCount() {
+    return db.prepare("SELECT COUNT(*) c FROM waitlist").get().c || 0;
+  },
+
+  waitlistFoundingTaken() {
+    return db.prepare("SELECT COUNT(*) c FROM waitlist WHERE tier = 'founding'").get().c || 0;
+  },
+
+  waitlistAll() {
+    return db.prepare("SELECT * FROM waitlist ORDER BY seat").all();
   },
 
   // admin traction view: every family + their usage

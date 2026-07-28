@@ -1,5 +1,10 @@
+import { useEffect, useState } from 'react'
 import { Reveal } from '../components/ui'
 import { SessionDemo } from './SessionDemo'
+
+const API =
+  (import.meta.env.VITE_API_BASE as string | undefined) ??
+  (import.meta.env.DEV ? 'http://localhost:3000' : '')
 
 const stats = [
   { value: 'One orb', label: 'the entire interface' },
@@ -9,6 +14,16 @@ const stats = [
 ]
 
 export function Hero() {
+  /* Starts at the full cohort and only ever goes down, so the line reads
+     correctly before the server answers and if it never does. */
+  const [seats, setSeats] = useState({ remaining: 50, seats: 50 })
+  useEffect(() => {
+    fetch(`${API}/api/waitlist`)
+      .then((r) => r.json())
+      .then((c) => typeof c?.remaining === 'number' && setSeats(c))
+      .catch(() => {})
+  }, [])
+
   return (
     <section id="top" className="relative overflow-hidden">
       {/* soft indigo wash, in Sarvam's hero manner */}
@@ -58,6 +73,15 @@ export function Hero() {
               See how we remember
             </a>
           </div>
+
+          <a
+            href="#/waitlist"
+            className="text-tx-secondary hover:text-tx mt-6 inline-flex items-center gap-2 font-mono text-[10px] tracking-[0.14em] uppercase transition-colors"
+          >
+            <span className="bg-sr-green-600 live-dot h-1.5 w-1.5 rounded-full" />
+            {seats.remaining} of {seats.seats} free seats left
+            <span className="text-tx-tertiary">— join the first fifty</span>
+          </a>
         </Reveal>
 
         <Reveal delay={120} className="mt-16">

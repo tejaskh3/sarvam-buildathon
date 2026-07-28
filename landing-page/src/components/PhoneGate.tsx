@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { authFetch } from '../lib/auth'
+import { LangSelect } from './LangSelect'
 
 /* ------------------------------------------------------------------
    Link a household to Yaadein.
@@ -25,19 +26,6 @@ export function clearStoredPhone() {
   localStorage.removeItem(KEY)
 }
 
-const LANGS: [string, string][] = [
-  ['hi-IN', 'हिन्दी'],
-  ['kn-IN', 'ಕನ್ನಡ'],
-  ['ta-IN', 'தமிழ்'],
-  ['te-IN', 'తెలుగు'],
-  ['mr-IN', 'मराठी'],
-  ['bn-IN', 'বাংলা'],
-  ['gu-IN', 'ગુજરાતી'],
-  ['ml-IN', 'മലയാളം'],
-  ['pa-IN', 'ਪੰਜਾਬੀ'],
-  ['od-IN', 'ଓଡ଼ିଆ'],
-  ['en-IN', 'English'],
-]
 
 export function PhoneGate({
   api,
@@ -202,13 +190,7 @@ export function PhoneGate({
                 onChange={(e) => setElder(e.target.value)}
                 className={input}
               />
-              <select value={lang} onChange={(e) => setLang(e.target.value)} className={input}>
-                {LANGS.map(([code, label]) => (
-                  <option key={code} value={code}>
-                    {label}
-                  </option>
-                ))}
-              </select>
+              <LangSelect value={lang} onChange={setLang} />
               <input
                 placeholder="Your name (optional)"
                 value={family}

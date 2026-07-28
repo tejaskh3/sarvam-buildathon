@@ -1,0 +1,53 @@
+{
+  "expo": {
+    "name": "Yaadein",
+    "slug": "yaadein",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#f5f5f3",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.yaadein.app",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Yaadein listens when you tap the microphone, so it can talk with you in your own language."
+      }
+    },
+    "android": {
+      "package": "com.yaadein.app",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "backgroundColor": "#f5f5f3",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.INTERNET",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#f5f5f3",
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "7da9b712-d373-4f02-ba5a-d915c415e55d"
+      }
+    },
+    "owner": "tejaskh3"
+  }
+}

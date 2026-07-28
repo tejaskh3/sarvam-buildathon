@@ -176,7 +176,8 @@ SARVAM_API_KEY=…
 | `CLERK_PUBLISHABLE_KEY` (server) | Dashboard endpoints are number-scoped only, exactly as today | Signed-in session required; a household can only be read by the account that claimed it |
 | `VITE_CLERK_PUBLISHABLE_KEY` (build) | No sign-in UI, no account button | Sign-in card on `#/family`, avatar + sign-out in the header |
 | `DODO_WEBHOOK_SECRET` | `/api/dodo/webhook` returns 503 | Signature enforced, plan upgraded |
-| `DODO_FAMILY_LINK` | Family card shows "Coming this week", disabled | Card links to checkout with `metadata_phone` |
+| `DODO_FAMILY_LINK` | Family card sells the free seat only | Same card, plus a small "or start paying now" link |
+| `WAITLIST_SEATS` / `_FOUNDING` / `_FREE_MONTHS` | 50 / 10 / 3 | Cohort resized everywhere at once — no rebuild |
 
 **Important:** the elder's own routes (`/api/session/start`, `/api/turn`) and the
 public `/api/stats` are never gated — verified by test. Turning Clerk on can
@@ -195,6 +196,26 @@ signed-in family to enter that number claims it. Once claimed, another account
 gets `403 already_claimed`.
 
 ---
+
+## 4b. Not charging yet is now the offer, not an excuse
+
+While KYC is under review there is nothing to charge, so the site no longer says
+"Coming this week". It sells the cohort instead:
+
+- **50 seats**, all free for **3 months**, then ₹1,499/mo — and we ask first.
+- **10 of the 50** are Founding Families and never pay.
+
+`#/waitlist` is where that happens. One Google tap claims a numbered seat; a
+short form (elder's name, language, number) turns the seat into a household we
+can switch on the same day. `POST /api/waitlist` is idempotent on the Clerk user
+id, falling back to the email address when Clerk is off — a family that submits
+twice gets their original seat number back, never a second one.
+
+Watch it: `GET /api/waitlist` (public counter) ·
+`GET /api/waitlist/list?admin=<phone>` (who has claimed one).
+
+Seat numbers come from `MAX(seat)+1`, not `COUNT(*)`, so deleting a test row
+cannot hand seat #3 to two different families.
 
 ## 5. How a payment finds the right family
 

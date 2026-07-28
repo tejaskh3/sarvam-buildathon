@@ -747,7 +747,7 @@ function RemindersCard({ pid }: { pid: number }) {
     <div className="border-st-secondary rounded-2xl border bg-white px-6 py-5">
       <h3 className="text-tx text-[15px] font-semibold">Things to gently remind them</h3>
       <p className="text-tx-tertiary mt-1 text-[13px] leading-relaxed">
-        Yaadein brings one of these into the conversation the way a daughter would — once, in passing, never as
+        Yaadein brings one of these into the conversation the way a son or daughter would — once, in passing, never as
         an alarm. You&apos;ll see how often it was mentioned and how often they answered.
       </p>
 

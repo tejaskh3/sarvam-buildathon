@@ -196,6 +196,17 @@ function registerAllowed(ip) {
   return hits.length <= 12;
 }
 
+// The first-fifty cohort. Dodo KYC is still under review so nobody can be
+// charged yet — rather than apologise for that, the cohort is the offer:
+// WAITLIST_SEATS families join free, all of them get WAITLIST_FREE_MONTHS
+// months at ₹0, and the first WAITLIST_FOUNDING never pay at all.
+// Defaulted in code so none of it waits on a Railway variable.
+const waitlistConfig = () => ({
+  seats: Number(process.env.WAITLIST_SEATS) || 50,
+  founding: Number(process.env.WAITLIST_FOUNDING) || 10,
+  free_months: Number(process.env.WAITLIST_FREE_MONTHS) || 3,
+});
+
 // Sarvam out of credits (402) is the one failure that looks like a total
 // outage to a user. Name it, so the UI can say something true.
 function sarvamError(e) {
@@ -1172,10 +1183,21 @@ const server = http.createServer(async (req, res) => {
         // which family just paid — there is no login to tell us
         return url + (url.includes("?") ? "&" : "?") + `metadata_phone=${phone}`;
       };
+      const wl = waitlistConfig();
+      const wlTaken = db.waitlistCount();
       json(res, 200, {
         mode: process.env.DODO_MODE || "test",
         current_plan: reg ? reg.plan : null,
         contact_whatsapp: process.env.DODO_CONTACT_WHATSAPP || null,
+        // The pricing cards say "₹0 for three months" — that promise is set
+        // here, not in the bundle, so changing the cohort size never needs a
+        // frontend rebuild.
+        waitlist: {
+          ...wl,
+          taken: wlTaken,
+          remaining: Math.max(0, wl.seats - wlTaken),
+          founding_left: Math.max(0, wl.founding - db.waitlistFoundingTaken()),
+        },
         plans: [
           { key: "founding", name: "Founding Family", price: 0, period: "forever",
             checkout_url: null },
@@ -1185,6 +1207,104 @@ const server = http.createServer(async (req, res) => {
             checkout_url: withPhone(process.env.DODO_CENTRE_LINK) },
         ],
       });
+      return;
+    }
+
+    // ── the first-fifty waitlist ──
+    // Public counter. Deliberately NOT cached the way /api/stats is: these are
+    // two COUNT(*)s over at most fifty rows, and a counter that says "12 seats
+    // left" for another 30 seconds after you took one is worse than no counter.
+    if (req.method === "GET" && req.url === "/api/waitlist") {
+      const cfg = waitlistConfig();
+      const taken = db.waitlistCount();
+      const foundingTaken = db.waitlistFoundingTaken();
+      json(res, 200, {
+        ...cfg,
+        taken,
+        remaining: Math.max(0, cfg.seats - taken),
+        founding_taken: foundingTaken,
+        founding_left: Math.max(0, cfg.founding - foundingTaken),
+      });
+      return;
+    }
+
+    // Who has claimed a seat. Admin-gated like the traction view.
+    const wll = req.url.match(/^\/api\/waitlist\/list\?admin=(\d+)$/);
+    if (req.method === "GET" && wll) {
+      if (!isAdmin(wll[1])) return json(res, 403, { error: "not_admin" });
+      const rows = db.waitlistAll();
+      json(res, 200, { count: rows.length, rows });
+      return;
+    }
+
+    // Claim a seat. Clerk-optional in the same way everything else here is: with
+    // Clerk on, the seat is keyed to a real Google account and one account can
+    // hold one seat; with it off, the email address does that job.
+    if (req.method === "POST" && req.url === "/api/waitlist") {
+      let body = {};
+      try { body = JSON.parse((await readBody(req)).toString() || "{}"); } catch { /* empty */ }
+
+      const ip = (req.headers["x-forwarded-for"] || "").split(",")[0].trim() || req.socket.remoteAddress || "?";
+      if (!registerAllowed(ip)) {
+        console.warn(`[waitlist] rate limited ${ip}`);
+        return json(res, 429, { error: "too_many", message: "Too many sign-ups from here. Please try again later." });
+      }
+
+      const cfg = waitlistConfig();
+      let ownerId = null;
+      if (clerk.enabled()) {
+        const who = await clerk.userFor(req);
+        if (!who) return json(res, 401, { error: "sign_in_required", message: "Please sign in to hold a seat." });
+        ownerId = who.userId;
+      }
+
+      // The Clerk session token carries no email — there is no JWT template, so
+      // clerk.userFor() returns the user id and nothing else. The browser sends
+      // the address from useUser(). That makes it contact data, not identity:
+      // ownerId is what keys the row whenever Clerk is on.
+      const email = String(body.email || "").trim().toLowerCase().slice(0, 120);
+      const emailOk = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);
+      if (!ownerId && !emailOk) {
+        return json(res, 400, { error: "bad_email", message: "Please enter an email address we can reach you on." });
+      }
+
+      const phone = /^\d{10}$/.test(String(body.phone || "").trim()) ? String(body.phone).trim() : null;
+      const language = /^[a-z]{2}-IN$/.test(body.language || "") ? body.language : null;
+      const elderName = String(body.elder_name || "").trim().slice(0, 60);
+      const familyName = String(body.name || "").trim().slice(0, 60);
+
+      const seat = db.joinWaitlist({
+        owner_id: ownerId,
+        email: emailOk ? email : null,
+        name: familyName,
+        elder_name: elderName,
+        language,
+        phone,
+        note: String(body.note || "").trim().slice(0, 300),
+        founding: cfg.founding,
+      });
+
+      // A seat with a number on it is a household we can switch on the same day,
+      // so create it now instead of chasing it later. Same claim rule as
+      // /api/register: a row already owned by somebody else is left alone.
+      if (phone) {
+        const existing = db.getRegistration(phone);
+        if (!existing || !existing.owner_id || existing.owner_id === ownerId) {
+          db.register({
+            phone, elder_name: elderName, language, family_name: familyName,
+            source: "waitlist", verified: ownerId ? 1 : 0, owner_id: ownerId,
+          });
+        } else {
+          console.warn(`[waitlist] seat #${seat.seat} left ${phone} alone — owned by ${existing.owner_id}`);
+        }
+      }
+
+      const taken = db.waitlistCount();
+      console.log(
+        `[waitlist] seat #${seat.seat} (${seat.tier})${seat.already ? " returning" : ""} ` +
+        `elder=${elderName || "?"} lang=${language || "?"} — ${taken}/${cfg.seats} taken`
+      );
+      json(res, 200, { ok: true, ...seat, ...cfg, taken, remaining: Math.max(0, cfg.seats - taken) });
       return;
     }
 
@@ -1580,7 +1700,12 @@ server.listen(PORT, () => {
     `   ${on(dodo.configured())} Dodo webhook` +
     `   ${on(process.env.DODO_FAMILY_LINK)} Family checkout` +
     `   ${on(checkin.dialerReady())} Check-in calls` +
-    `   [${process.env.DODO_MODE || "test"} mode]\n`
+    `   [${process.env.DODO_MODE || "test"} mode]`
+  );
+  const wl = waitlistConfig();
+  console.log(
+    `   🪑 Waitlist ${db.waitlistCount()}/${wl.seats} seats taken` +
+    `   (${wl.founding} free forever, ${wl.free_months} months free for the rest)\n`
   );
   ensureAcks().catch((e) => console.warn("[acks] init failed:", e.message));
 

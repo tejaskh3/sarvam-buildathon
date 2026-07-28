@@ -47,10 +47,10 @@ export function About() {
             </p>
             <p>Meanwhile, something quieter is being lost.</p>
             <p>
-              A grandmother knows the name of the street she grew up on. She knows what her mother
-              cooked on Sundays. She knows why the family left that town in 1971. These aren’t in
-              any album. They live in one person’s head, and they’re fading — often before anyone
-              thought to ask.
+              A grandmother knows the name of the street she grew up on, and what her mother
+              cooked on Sundays. A grandfather knows why the family left that town in 1971. These
+              aren’t in any album. They live in one person’s head, and they’re fading — often
+              before anyone thought to ask.
             </p>
             <p>
               Families don’t lose these stories all at once. They lose them a little at a time, on

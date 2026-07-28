@@ -12,6 +12,7 @@ Voice-led AI memory companion for people living with dementia. Sarvam Buildathon
 | **[06-market-research.md](06-market-research.md)** | 4 deep-research reports condensed: competitors & pricing, caregiver pain, B2B channel with phone numbers, evidence base with citations |
 | **[07-keys-and-accounts.md](07-keys-and-accounts.md)** | Tejas-only runbook: Dodo KYC, Clerk sign-in, the env vars to paste into Railway |
 | **[08-submission.md](08-submission.md)** | Submission pack: criterion-by-criterion answers, 5-minute demo script, honest limitations |
+| **[09-tam-pmf.md](09-tam-pmf.md)** | TAM/SAM/SOM with the arithmetic shown, 3-year revenue projection, six classes of PMF evidence, four honest risks — every figure hyperlinked to a primary source |
 | [DECISIONS.md](DECISIONS.md) | Every autonomous call taken during the build (D1–D17), with the reasoning and known limits |
 
 ## The idea in three lines
