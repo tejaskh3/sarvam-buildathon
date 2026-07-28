@@ -12,9 +12,10 @@ import { API } from '../lib/api'
    interrupt the agent and no audio has to be recorded/uploaded first.
    ------------------------------------------------------------------ */
 
-const REALTIME =
-  (import.meta.env.VITE_REALTIME_URL as string | undefined) ??
-  `${window.location.protocol}//${window.location.hostname}:7860`
+/* No fallback, deliberately. TryPage mounts this component only when
+   VITE_REALTIME_URL is set, and the guess this used to make — hostname:7860 —
+   is exactly what would break the deployed site, where no such port exists. */
+const REALTIME = (import.meta.env.VITE_REALTIME_URL as string).trim()
 
 export function TryPageRealtime() {
   const [voice, setVoice] = useState<Voice>('idle')

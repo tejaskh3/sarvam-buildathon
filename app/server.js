@@ -1247,7 +1247,6 @@ const server = http.createServer(async (req, res) => {
       json(res, 200, {
         mode: process.env.DODO_MODE || "test",
         current_plan: reg ? reg.plan : null,
-        contact_whatsapp: process.env.DODO_CONTACT_WHATSAPP || null,
         // The pricing cards say "₹0 for three months" — that promise is set
         // here, not in the bundle, so changing the cohort size never needs a
         // frontend rebuild.

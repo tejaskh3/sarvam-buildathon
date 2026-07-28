@@ -5,7 +5,8 @@
   "scripts": {
     "start": "node --experimental-sqlite app/server.js",
     "build": "cd landing-page && npm ci && npm run build",
-    "realtime": "cd realtime && uv run python bot.py -t webrtc --host 127.0.0.1 --port 7860"
+    "realtime": "cd realtime && uv run python bot.py -t webrtc --host 127.0.0.1 --port 7860",
+    "test": "node scripts/voice-guards.mjs && node --experimental-sqlite scripts/checkin-tests.mjs && node --experimental-sqlite scripts/auth-tests.mjs"
   },
   "engines": {
     "node": ">=22"

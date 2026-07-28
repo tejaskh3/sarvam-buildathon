@@ -21,7 +21,6 @@ type Waitlist = {
 type PlansResponse = {
   plans: Plan[]
   current_plan: string | null
-  contact_whatsapp: string | null
   waitlist: Waitlist
   mode: string
 }

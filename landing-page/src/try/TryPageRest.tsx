@@ -3,6 +3,7 @@ import { Orb, VoiceLabel, type Voice } from '../components/Orb'
 import { PhoneGate, clearStoredPhone, getStoredPhone } from '../components/PhoneGate'
 import { Logo } from '../components/Logo'
 import { API } from '../lib/api'
+import { encodeWavPcm } from '../lib/wav'
 
 /* ------------------------------------------------------------------
    Try Yaadein — a live voice session.
@@ -123,7 +124,7 @@ export function TryPageRest() {
     if (!rec) return
     recRef.current = null
     levelRef.current = 0
-    const wav = encodeWav(rec.chunks, 16000)
+    const wav = encodeWavPcm(rec.chunks, 16000)
     if (!rec.hasVoice || wav.size < 8000) {
       setState('idle') // nothing was said — no ack, no STT call
       return
@@ -451,38 +452,4 @@ function MicIcon() {
 
 function Mark() {
   return <Logo size={34} />
-}
-
-/* ── wav encoding ── */
-
-function encodeWav(chunks: Float32Array[], rate: number) {
-  let len = 0
-  for (const c of chunks) len += c.length
-  const pcm = new Int16Array(len)
-  let o = 0
-  for (const c of chunks)
-    for (let i = 0; i < c.length; i++) {
-      const v = Math.max(-1, Math.min(1, c[i]))
-      pcm[o++] = v < 0 ? v * 0x8000 : v * 0x7fff
-    }
-  const buf = new ArrayBuffer(44 + pcm.length * 2)
-  const dv = new DataView(buf)
-  const W = (off: number, s: string) => {
-    for (let i = 0; i < s.length; i++) dv.setUint8(off + i, s.charCodeAt(i))
-  }
-  W(0, 'RIFF')
-  dv.setUint32(4, 36 + pcm.length * 2, true)
-  W(8, 'WAVE')
-  W(12, 'fmt ')
-  dv.setUint32(16, 16, true)
-  dv.setUint16(20, 1, true)
-  dv.setUint16(22, 1, true)
-  dv.setUint32(24, rate, true)
-  dv.setUint32(28, rate * 2, true)
-  dv.setUint16(32, 2, true)
-  dv.setUint16(34, 16, true)
-  W(36, 'data')
-  dv.setUint32(40, pcm.length * 2, true)
-  new Int16Array(buf, 44).set(pcm)
-  return new Blob([buf], { type: 'audio/wav' })
 }

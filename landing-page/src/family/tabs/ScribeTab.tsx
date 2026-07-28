@@ -3,7 +3,7 @@ import { authFetch } from '../../lib/auth'
 import { API } from '../../lib/api'
 import type { ScribeRow } from '../types'
 import { Loading } from '../ui'
-import { encodeWavPcm } from '../lib/wav'
+import { encodeWavPcm } from '../../lib/wav'
 
 /* Session notes — Scribe records a human-run session and writes it up. */
 
