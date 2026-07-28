@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Orb, VoiceLabel, type Voice } from '../components/Orb'
-import { PhoneGate, clearStoredPhone, getStoredPhone } from '../components/PhoneGate'
-import { Logo } from '../components/Logo'
+import { type Voice } from '../components/Orb'
+import { clearStoredPhone, getStoredPhone } from '../components/PhoneGate'
 import { API } from '../lib/api'
 import { encodeWavPcm } from '../lib/wav'
+import { TryShell } from './TryShell'
+import type { Line } from './types'
 
 /* ------------------------------------------------------------------
    Try Yaadein — a live voice session.
@@ -21,8 +22,7 @@ const MAX_REC_MS = 25000 // Saaras REST caps at 30s — send before we hit it
 export function TryPageRest() {
   const [voice, setVoice] = useState<Voice>('idle')
   const [busy, setBusy] = useState(false)
-  type PhotoCard = { url: string; event: string; place: string; year: string; people: string[] }
-  const [lines, setLines] = useState<{ who: 'agent' | 'you'; text: string; photo?: PhotoCard }[]>([])
+  const [lines, setLines] = useState<Line[]>([])
   const [error, setError] = useState<string | null>(null)
   const [contract, setContract] = useState<Record<string, unknown> | null>(null)
   /* today's CST activity, chosen server-side (display only) */
@@ -280,176 +280,34 @@ export function TryPageRest() {
   }, [toggle])
 
   const listening = voice === 'listening'
-
   return (
-    <div className="bg-sf flex min-h-screen flex-col">
-      {!phone && gateOpen && (
-        <PhoneGate api={API} onDone={setPhone} onClose={() => setGateOpen(false)} forElder />
-      )}
-      <header className="mx-auto flex w-full max-w-[1180px] items-center justify-between px-5 py-4 sm:px-8">
-        <a
-          href="#top"
-          onClick={() => (window.location.hash = '')}
-          className="flex items-center gap-2.5"
-        >
-          <Mark />
-          <span className="font-season text-tx text-[20px] leading-none">
-            Yaadein
-          </span>
-        </a>
-        <a
-          href="#top"
-          onClick={() => (window.location.hash = '')}
-          className="pill pill-ghost !py-2 !text-[13px]"
-        >
-          ← Back to site
-        </a>
-      </header>
-
-      <main className="mx-auto flex w-full max-w-[720px] flex-1 flex-col items-center px-5 pt-6 pb-12">
-        {theme ? (
-          <div
-            className="border-sr-indigo-700/20 bg-sr-indigo-700/5 flex items-center gap-2 rounded-full border px-4 py-1.5"
-            title="Today's activity, from the clinically validated cognitive stimulation protocol"
-          >
-            <span className="text-sr-indigo-700 font-mono text-[9px] tracking-[0.16em] uppercase">
-              Aaj ki baithak
-            </span>
-            <span className="text-tx text-[13px] font-medium">{theme.title}</span>
-          </div>
-        ) : (
-          <p className="text-tx-tertiary font-mono text-[10px] tracking-[0.2em] uppercase">
-            Live demo · speaks every Indian language
-          </p>
-        )}
-
-        <Orb voice={voice} levelRef={levelRef} className="mt-2 w-full max-w-[420px]" />
-
-        {/* the only control on the page */}
-        <button
-          onClick={() => void toggle()}
-          disabled={busy}
-          aria-pressed={listening}
-          aria-label={
-            voice === 'speaking' ? 'Interrupt and talk' : listening ? 'Stop and send' : 'Start talking'
-          }
-          className={`-mt-6 flex h-[68px] w-[68px] items-center justify-center rounded-full border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-40 ${
-            listening
-              ? 'border-sr-purple-600 bg-sr-purple-600 scale-105 text-white shadow-[0_0_0_10px_rgba(109,92,240,0.14)]'
-              : 'border-st-secondary text-tx hover:border-tx bg-white'
-          }`}
-        >
-          <MicIcon />
-        </button>
-
-        <div className="mt-5 flex h-5 items-center">
-          {voice === 'idle' ? (
-            <span className="text-tx-tertiary font-mono text-[11px] tracking-[0.16em] uppercase">
-              {busy ? 'One moment' : sessionRef.current ? 'Paused — tap to continue talking' : 'Tap once to begin — then just talk'}
-            </span>
-          ) : (
-            <VoiceLabel voice={voice} />
-          )}
-        </div>
-
-        {error && (
-          <p className="mt-4 rounded-lg bg-red-50 px-4 py-2 text-[13px] text-red-800">
-            {error}{' '}
-            {API.includes('localhost') &&
-              '— is the agent server running? (node app/server.js)'}
-          </p>
-        )}
-
-        {contract && (
-          <div className="mt-6 flex w-full flex-wrap items-center justify-center gap-1.5">
-            {(['RESUMED', 'CAPTURED', 'CLOSED', 'WRITTEN', 'SAFE'] as const).map((k) => {
-              const v = contract[k]
-              const on = typeof v === 'number' ? v > 0 : !!v
-              return (
-                <span
-                  key={k}
-                  className={`rounded-full px-2.5 py-1 font-mono text-[9px] tracking-[0.12em] ${
-                    on ? 'bg-sr-green-600/10 text-sr-green-600' : 'bg-sf-secondary text-tx-tertiary'
-                  }`}
-                  title="Session Contract — every session passes or fails, live"
-                >
-                  {on ? '✓' : '·'} {k}
-                  {typeof v === 'number' && v > 0 ? ` ${v}` : ''}
-                </span>
-              )
-            })}
-          </div>
-        )}
-
-        {/* voice-first: no chat history — only Yaadein's latest words,
-            centered like a caption under the orb */}
-        {(() => {
-          const lastAgent = [...lines].reverse().find((l) => l.who === 'agent')
-          if (!lastAgent) return null
-          return (
-            <div key={lines.length} className="caption-fade mt-8 flex w-full flex-col items-center text-center">
-              {lastAgent.photo && (
-                <figure className="photo-pop mb-5 w-full max-w-[360px] rotate-[-1deg] rounded-2xl bg-white p-3 pb-4 shadow-[0_10px_36px_rgba(30,32,51,0.16)]">
-                  <img
-                    src={`${API}${lastAgent.photo.url}`}
-                    alt={lastAgent.photo.event || 'A family memory'}
-                    className="aspect-[4/3] w-full rounded-xl object-cover"
-                  />
-                  <figcaption className="mt-3 text-center">
-                    {(lastAgent.photo.event || lastAgent.photo.place || lastAgent.photo.year) && (
-                      <p className="font-season text-tx text-[16px] leading-snug">
-                        {lastAgent.photo.event || 'A family moment'}
-                        {(lastAgent.photo.place || lastAgent.photo.year) && (
-                          <span className="text-tx-tertiary">
-                            {' '}· {[lastAgent.photo.place, lastAgent.photo.year].filter(Boolean).join(', ')}
-                          </span>
-                        )}
-                      </p>
-                    )}
-                    {lastAgent.photo.people.length > 0 && (
-                      <p className="text-tx-secondary mt-1 text-[12.5px]">
-                        In this photo: {lastAgent.photo.people.join(' · ')}
-                      </p>
-                    )}
-                    <p className="text-tx-tertiary mt-1 font-mono text-[9px] tracking-[0.14em] uppercase">
-                      Shared by your family
-                    </p>
-                  </figcaption>
-                </figure>
-              )}
-              <p className="text-tx max-w-[540px] text-[17px] leading-relaxed text-balance">
-                {lastAgent.text}
-              </p>
-            </div>
-          )
-        })()}
-      </main>
-    </div>
+    <TryShell
+      phone={phone}
+      gateOpen={gateOpen}
+      onPhone={setPhone}
+      onCloseGate={() => setGateOpen(false)}
+      theme={theme}
+      voice={voice}
+      levelRef={levelRef}
+      lines={lines}
+      error={error}
+      contract={contract}
+      onMic={() => void toggle()}
+      micDisabled={busy}
+      micActive={listening}
+      micLabel={
+        voice === 'speaking' ? 'Interrupt and talk' : listening ? 'Stop and send' : 'Start talking'
+      }
+      idleHint={
+        busy
+          ? 'One moment'
+          : sessionRef.current
+            ? 'Paused — tap to continue talking'
+            : 'Tap once to begin — then just talk'
+      }
+      errorHint={
+        API.includes('localhost') ? '— is the agent server running? (node app/server.js)' : undefined
+      }
+    />
   )
-}
-
-function MicIcon() {
-  return (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <rect
-        x="9"
-        y="3"
-        width="6"
-        height="11"
-        rx="3"
-        stroke="currentColor"
-        strokeWidth="1.8"
-      />
-      <path
-        d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-      />
-    </svg>
-  )
-}
-
-function Mark() {
-  return <Logo size={34} />
 }
