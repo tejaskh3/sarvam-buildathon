@@ -160,6 +160,43 @@ export function VoiceLabel({ voice }: { voice: Voice }) {
   )
 }
 
+/* The label while Yaadein is thinking.
+
+   This is what replaced the ack clips. There used to be a pre-rendered
+   "achha…" the instant she stopped speaking, which covered the pause by
+   answering before anything had been heard; the pause is silent now, and a
+   silent pause on a screen with one orb and one button is indistinguishable
+   from a broken one. So the waiting is shown rather than spoken — four bars
+   riding the same `wave-bar` keyframe the rest of the site uses, staggered so
+   they read as a travelling wave rather than four things blinking.
+
+   Grey, not purple or pink. Those two colours mean a voice is active; this is
+   the state where neither is, and borrowing one would say something is being
+   said. role="status" so a screen reader hears the wait too — the bars are
+   decoration and stay hidden from it. */
+export function ThinkingLabel({ label }: { label: string }) {
+  return (
+    <span
+      role="status"
+      className="text-tx-tertiary inline-flex items-center gap-2 font-mono text-[11px] tracking-[0.16em] uppercase"
+    >
+      <span aria-hidden className="flex h-3 items-end gap-[2.5px]">
+        {[0, 1, 2, 3].map((i) => (
+          <span
+            key={i}
+            /* -90ms apart: enough that the crest visibly travels left to
+               right, short enough that all four never sit flat together and
+               make it look stopped. */
+            style={{ animationDelay: `${i * -90}ms` }}
+            className="wave-bar bg-tx-tertiary/70 h-3 w-[2px] rounded-full"
+          />
+        ))}
+      </span>
+      {label}
+    </span>
+  )
+}
+
 function hexToRgb(h: string): [number, number, number] {
   return [
     parseInt(h.slice(1, 3), 16),

@@ -1,5 +1,5 @@
 import type { ReactNode, RefObject } from 'react'
-import { Orb, VoiceLabel, type Voice } from '../components/Orb'
+import { Orb, VoiceLabel, ThinkingLabel, type Voice } from '../components/Orb'
 import { PhoneGate } from '../components/PhoneGate'
 import { Logo } from '../components/Logo'
 import { API } from '../lib/api'
@@ -43,6 +43,8 @@ export type TryShellProps = {
   micLabel: string
   /** what the line under the orb says while nothing is happening */
   idleHint: string
+  /** a turn is in flight — the hint gets a wave, so the wait reads as work */
+  thinking?: boolean
   /** appended to an error when it is worth naming what is not running */
   errorHint?: string
 
@@ -52,7 +54,7 @@ export type TryShellProps = {
 export function TryShell({
   phone, gateOpen, onPhone, onCloseGate,
   theme, voice, levelRef, lines, error, contract,
-  onMic, micDisabled, micActive, micLabel, idleHint, errorHint,
+  onMic, micDisabled, micActive, micLabel, idleHint, thinking, errorHint,
   children,
 }: TryShellProps) {
   const lastAgent = [...lines].reverse().find((l) => l.who === 'agent')
@@ -118,12 +120,16 @@ export function TryShell({
         </button>
 
         <div className="mt-5 flex h-5 items-center">
-          {voice === 'idle' ? (
+          {voice !== 'idle' ? (
+            <VoiceLabel voice={voice} />
+          ) : thinking ? (
+            /* idleHint is already "One moment" in both transports while busy;
+               the wave is the part that says it is still working. */
+            <ThinkingLabel label={idleHint} />
+          ) : (
             <span className="text-tx-tertiary font-mono text-[11px] tracking-[0.16em] uppercase">
               {idleHint}
             </span>
-          ) : (
-            <VoiceLabel voice={voice} />
           )}
         </div>
 

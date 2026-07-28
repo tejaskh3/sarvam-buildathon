@@ -301,6 +301,7 @@ export function TryPageRest() {
             ? 'Paused — tap to continue talking'
             : 'Tap once to begin — then just talk'
       }
+      thinking={busy}
       errorHint={
         API.includes('localhost') ? '— is the agent server running? (node app/server.js)' : undefined
       }

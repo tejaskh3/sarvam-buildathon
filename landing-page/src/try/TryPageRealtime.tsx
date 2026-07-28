@@ -273,6 +273,7 @@ export function TryPageRealtime() {
               ? 'Tap to reconnect'
               : 'Tap once to begin — then just talk'
       }
+      thinking={busy}
       errorHint={
         API.includes('localhost') || REALTIME.includes('localhost')
           ? '— are both local services running? (npm start and npm run realtime)'
