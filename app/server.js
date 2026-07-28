@@ -1210,23 +1210,28 @@ const server = http.createServer(async (req, res) => {
         `elder=${elderName || "?"} lang=${language || "?"} — ${taken}/${cfg.seats} taken`
       );
 
-      // Not awaited. The seat is already theirs; making them watch a spinner
-      // while we talk to Resend would trade the thing that matters for the
-      // receipt. `emailed` tells the page whether to promise an inbox — a
-      // "check your email" that never arrives is worse than not mentioning it.
-      const willEmail = emailOk && email.configured();
-      if (willEmail) {
-        void email.sendSeat(mail, {
-          name: familyName, elder_name: elderName, seat: seat.seat, tier: seat.tier,
-          seats: cfg.seats, free_months: cfg.free_months, founding: cfg.founding,
-          already: seat.already,
-        });
-      }
+      // The seat is committed above, so this await cannot cost anyone their
+      // place — the worst case is a slow button and "we'll be in touch".
+      //
+      // Awaited rather than fired and forgotten because `emailed` is what the
+      // page uses to say "check your email", and that is only true if Resend
+      // took the message. Reporting the intent instead of the result is how a
+      // rejected send still produced a promise of an inbox: the sandbox sender
+      // 403s every recipient except the Resend account owner, and the page said
+      // "check your email" anyway. sendSeat() never throws, so a bad day at
+      // Resend degrades to `false` and the honest copy.
+      const emailed = emailOk
+        ? await email.sendSeat(mail, {
+            name: familyName, elder_name: elderName, seat: seat.seat, tier: seat.tier,
+            seats: cfg.seats, free_months: cfg.free_months, founding: cfg.founding,
+            already: seat.already,
+          })
+        : false;
 
       json(res, 200, {
         ok: true, ...seat, ...cfg, taken,
         remaining: Math.max(0, cfg.seats - taken),
-        emailed: willEmail, email: emailOk ? mail : null,
+        emailed, email: emailOk ? mail : null,
       });
       return;
     }
@@ -1252,10 +1257,11 @@ const server = http.createServer(async (req, res) => {
       const count = db.notifyCount(topic);
       console.log(`[notify] ${mail} ${platform || "?"}${r.already ? " (already)" : ""} — ${count} waiting`);
 
-      const willEmail = email.configured();
-      if (willEmail) void email.sendAppNotify(mail, { platform });
+      // Same reasoning as the seat above: awaited so `emailed` is a result and
+      // not a hope. They are on the list either way.
+      const emailed = await email.sendAppNotify(mail, { platform });
 
-      json(res, 200, { ok: true, ...r, count, emailed: willEmail });
+      json(res, 200, { ok: true, ...r, count, emailed });
       return;
     }
 

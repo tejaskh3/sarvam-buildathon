@@ -289,7 +289,15 @@ function appEmail(d) {
 
 /**
  * Hands one message to Resend. Never throws and never rejects: callers are
- * inside a request that has already succeeded.
+ * inside a request whose important work — the seat — is already committed.
+ *
+ * Worth awaiting anyway, even though the seat does not depend on it: the
+ * return value is what the page uses to decide whether to say "check your
+ * email", and that claim is only worth making if Resend actually took the
+ * message. Awaiting a rejected send is how we found that out — the sandbox
+ * sender 403s every recipient except the account owner, and the page was
+ * cheerfully promising an inbox that had been refused.
+ *
  * @returns {Promise<boolean>} whether Resend accepted it
  */
 async function send(to, { subject, html, text }) {
@@ -312,9 +320,10 @@ async function send(to, { subject, html, text }) {
         text,
         ...(REPLY_TO ? { reply_to: REPLY_TO } : {}),
       }),
-      /* Resend is quick; a hung socket must not hold a connection open on a
-         request whose response has already gone out. */
-      signal: AbortSignal.timeout(10_000),
+      /* Resend answers in well under a second. The ceiling is low because a
+         family is waiting on this response: if Resend is having a bad day they
+         get their seat and "we'll be in touch" rather than a hung button. */
+      signal: AbortSignal.timeout(6_000),
     });
     if (!r.ok) {
       console.warn(`[email] resend ${r.status} for ${to}: ${(await r.text()).slice(0, 240)}`);
