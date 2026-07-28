@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { Suspense, lazy, useEffect, useRef, useState } from 'react'
 import { Reveal, Section, SectionHead } from '../components/Primitives'
+import { PhoneFlat } from '../components/PhoneFlat'
 import { API } from '../lib/api'
 
 /* ------------------------------------------------------------------
@@ -211,14 +212,60 @@ function NotifyForm() {
 
 /* ── the device ───────────────────────────────────────────────────── */
 
-/* Drawn, not screenshotted. A real screenshot of an app that does not exist
-   yet would be a claim we can't back; a line drawing reads as a plan. It shows
-   the one screen the elder ever sees — the orb and nothing else — because that
-   is the product promise the app has to keep. */
+/* three is ~170KB gzipped and this section is four screens down, so the 3D
+   phone is a separate chunk fetched only once it's nearly in view. Until it
+   lands — and if it never does, or the machine has no WebGL — the CSS phone
+   stands in. Same device either way; the visitor only loses the drag. */
+const Phone3D = lazy(async () => {
+  try {
+    return await import('../components/Phone3D')
+  } catch {
+    return { default: PhoneFlat }
+  }
+})
+
+/* Don't fetch a WebGL scene for someone who never scrolls this far.
+
+   Measured on scroll rather than observed: Chrome does not compute
+   intersections for a backgrounded or occluded tab, so an
+   IntersectionObserver here never fires until the tab is looked at — and the
+   section then sits there showing the flat phone. Reveal above already
+   carries a note about the same trap. One getBoundingClientRect on one
+   element per scroll costs nothing. */
+function useNearlyVisible<T extends Element>(margin = 600) {
+  const ref = useRef<T>(null)
+  const [near, setNear] = useState(false)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    let done = false
+    const check = () => {
+      if (done || !ref.current) return
+      const r = ref.current.getBoundingClientRect()
+      if (r.top < innerHeight + margin && r.bottom > -margin) {
+        done = true
+        setNear(true)
+        removeEventListener('scroll', check)
+        removeEventListener('resize', check)
+      }
+    }
+    check()
+    addEventListener('scroll', check, { passive: true })
+    addEventListener('resize', check)
+    return () => {
+      done = true
+      removeEventListener('scroll', check)
+      removeEventListener('resize', check)
+    }
+  }, [margin])
+  return [ref, near] as const
+}
+
 function Phone() {
+  const [ref, near] = useNearlyVisible<HTMLDivElement>()
   return (
     <Reveal className="flex justify-center">
-      <div className="relative">
+      <div ref={ref} className="relative">
         {/* the same indigo wash as the hero, so the device sits in our light */}
         <div
           aria-hidden
@@ -229,59 +276,19 @@ function Phone() {
           }}
         />
 
-        <div className="border-st bg-tx relative w-[248px] rounded-[38px] border-[6px] p-1.5 shadow-[0_28px_70px_-24px_rgba(30,32,51,0.5)]">
-          <div className="bg-sf relative overflow-hidden rounded-[30px] px-5 pt-9 pb-7">
-            {/* notch */}
-            <div className="bg-tx/85 absolute top-2.5 left-1/2 h-[18px] w-[74px] -translate-x-1/2 rounded-full" />
-
-            <p className="text-tx-tertiary text-center font-mono text-[8px] tracking-[0.18em] uppercase">
-              Aaj ki baithak
-            </p>
-            <p className="font-deva text-tx mt-1 text-center text-[15px] leading-none">
-              यादें
-            </p>
-
-            {/* the orb, as concentric rings */}
-            <div className="relative mx-auto mt-6 flex h-[112px] w-[112px] items-center justify-center">
-              <span className="border-sr-indigo-200 absolute inset-0 rounded-full border" />
-              <span className="border-sr-purple-200 absolute inset-[13px] rounded-full border" />
-              <span
-                className="absolute inset-[26px] rounded-full"
-                style={{
-                  background:
-                    'radial-gradient(circle at 34% 30%, #a5b4fc 0%, #6d5cf0 58%, #4250d5 100%)',
-                }}
-              />
-            </div>
-
-            <p className="font-season text-tx mt-6 text-center text-[15px] leading-snug text-balance">
-              “आपने पुणे का ज़िक्र किया था…”
-            </p>
-
-            {/* the mic — the only control, exactly as on the web page */}
-            <div className="mt-6 flex justify-center">
-              <span className="border-st-secondary flex h-[46px] w-[46px] items-center justify-center rounded-full border bg-white">
-                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden>
-                  <rect
-                    x="9"
-                    y="3"
-                    width="6"
-                    height="11"
-                    rx="3"
-                    stroke="#1e2033"
-                    strokeWidth="1.8"
-                  />
-                  <path
-                    d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"
-                    stroke="#1e2033"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                  />
-                </svg>
-              </span>
-            </div>
-          </div>
+        <div className="relative flex justify-center">
+          {near ? (
+            <Suspense fallback={<PhoneFlat />}>
+              <Phone3D />
+            </Suspense>
+          ) : (
+            <PhoneFlat />
+          )}
         </div>
+
+        <p className="text-tx-tertiary relative -mt-1 text-center font-mono text-[9px] tracking-[0.14em] uppercase">
+          Drag to turn it over
+        </p>
 
         {/* store badges, honestly labelled */}
         <div className="relative mt-6 flex justify-center gap-2">
