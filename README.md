@@ -13,20 +13,20 @@ Built for the Sarvam Epoch Buildathon, July 2026. Every model in the product is 
 One Node process and a SQLite file. That is the whole production stack.
 
 ```mermaid
-flowchart TB
-  Elder["Elder\nphone = identity\nno sign-in"] -->|"WAV audio\nPOST /api/turn"| Node
-  Family["Family\nClerk Google OAuth"] -->|"JWT-authed\nAPI calls"| Node
+flowchart LR
+  Elder["Elder\nphone = identity"] -->|"WAV audio\nPOST /api/turn"| Node
+  Family["Family\nClerk OAuth"] -->|"JWT-authed calls"| Node
 
-  subgraph railway["Production (Railway, single container)"]
-    Node["Node server\napp/server.js\nzero npm deps"]
-    DB[("SQLite\nnode:sqlite\n18 tables")]
-    Node --> DB
+  subgraph railway["Railway"]
+    Node["Node server\nserver.js"]
+    DB[("SQLite\n18 tables")]
   end
 
-  Node -->|"STT, LLM, TTS, Translate"| Sarvam["Sarvam AI"]
-  Node -->|"JWT verify\n(hand-rolled RS256)"| Clerk["Clerk JWKS"]
-  Node -->|"webhook HMAC"| Dodo["Dodo Payments"]
-  Node -->|"transactional email"| Resend["Resend"]
+  Node --> DB
+  Node --> Sarvam["Sarvam AI\nSTT + LLM + TTS + Translate"]
+  Node --> Clerk["Clerk JWKS"]
+  Node --> Dodo["Dodo Payments"]
+  Node --> Resend["Resend"]
 ```
 
 The elder records audio, taps stop, and the server runs the full pipeline: STT, voice guards, LLM, memory extraction, TTS. Everything in one process, one `handleTurn()` function, one database file.
@@ -37,29 +37,23 @@ The elder records audio, taps stop, and the server runs the full pipeline: STT, 
 
 ```mermaid
 flowchart TD
-  A["Elder taps orb,\nspeaks, taps again"] --> B["POST /api/turn\n(raw WAV)"]
-  B --> C["Sarvam STT\nsaaras:v3, codemix"]
-  C --> D["Voice guards\n(code-enforced, not prompts)"]
-  D --> D1["strip fillers\n(um, uh, haan, achha...)"]
-  D --> D2["detect repetition"]
-  D --> D3["detect dangling recall"]
-  D --> D4["detect echo"]
-  D --> D5["enforce BANNED\nrecall-test regex"]
-
+  A["Elder speaks"] --> B["POST /api/turn"]
+  B --> C["Sarvam STT\nsaaras:v3"]
+  C --> D["Voice guards\nfillers, repetition,\necho, dangling recall,\nBANNED regex"]
   D --> E{"Known elder?"}
-  E -->|"Yes"| F["Build context:\nknown facts, open loop,\ndue memories, CST theme,\norientation line, reminder"]
-  E -->|"No"| G["Run extraction BLOCKING\nto recognize them this turn"]
 
-  F --> H["Sarvam LLM\nsarvam-30b (fast)\nor sarvam-105b (if stalled)"]
+  E -->|"Yes"| F["Build context:\nfacts, open loop,\nCST theme, reminder"]
+  E -->|"No"| G["Extraction BLOCKING\nto recognize them"]
+
+  F --> H["Sarvam LLM\nsarvam-30b or 105b"]
   G --> H
 
-  F -->|"parallel"| I["Memory extraction\nsarvam-30b, JSON mode\nprovenance grading"]
+  F -.->|"parallel"| I["Memory extraction\nsarvam-30b, JSON"]
+  I -.-> M[("Store in SQLite")]
 
-  H --> J["Post-reply guards:\nno fabricated memory,\nno leaked cue answer,\nno dead-end turn"]
-  J --> K["Sarvam TTS\nbulbul:v3, simran, 0.85"]
-  K --> L["Return audio + text\n+ session contract"]
-
-  I --> M["Store memories\nin SQLite"]
+  H --> J["Post-reply guards"]
+  J --> K["Sarvam TTS\nbulbul:v3"]
+  K --> L["Return audio + text"]
 ```
 
 Two things worth noting here. First, memory extraction runs in parallel with the reply for known elders (so it never adds latency), but runs blocking for unknown elders (so a returning person is recognized in the same turn). Second, the voice guards are enforced in code, not left to the system prompt. The `BANNED` regex catches recall-test phrases (`yaad hai?`, `yaad karo`). If the model's reply leaks a stored fact as a hint, the server regenerates. If regeneration still leaks, it drops the offending sentences. If the reply has no question, `keepTheFloor()` appends one so the conversation never dies.
@@ -86,12 +80,15 @@ Every session tracks six signals. The frontend shows them live and they show up 
 
 ```mermaid
 flowchart LR
-  R["RESUMED\nPicked up a prior thread"]
-  C["CAPTURED\nNew memories extracted"]
-  CL["CLOSED\nNo open loops dangling"]
-  W["WRITTEN\nSession notes generated"]
-  S["SAFE\nNo banned phrases survived"]
-  E["ENGAGED\nTurns, word count,\ntopic elaboration"]
+  subgraph contract["Session Contract"]
+    direction LR
+    R["RESUMED"]
+    C["CAPTURED"]
+    CL["CLOSED"]
+    W["WRITTEN"]
+    S["SAFE"]
+    E["ENGAGED"]
+  end
 ```
 
 | Signal | What trips it |
@@ -110,16 +107,14 @@ flowchart LR
 ```mermaid
 stateDiagram-v2
   [*] --> ACTIVE: Elder states a fact
-  ACTIVE --> ACTIVE: Elder confirms or elaborates
+  ACTIVE --> ACTIVE: Confirms or elaborates
   ACTIVE --> SUPERSEDED: Elder corrects it
   SUPERSEDED --> [*]
-  ACTIVE --> UNRESOLVED: Contradicting statement
-  UNRESOLVED --> ACTIVE: Family resolves conflict
-
-  state "safe_to_use flag" as flag
-  ACTIVE --> flag: Family marks avoid
-  flag --> ACTIVE: Family re-enables
+  ACTIVE --> UNRESOLVED: Contradiction detected
+  UNRESOLVED --> ACTIVE: Family resolves
 ```
+
+The family can also set `safe_to_use = false` on any ACTIVE memory via the dashboard, which filters it out of conversation context at retrieval time. This is a flag on the row, not a separate status.
 
 Every memory carries a provenance grade:
 
