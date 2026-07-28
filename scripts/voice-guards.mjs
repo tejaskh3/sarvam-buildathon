@@ -1,36 +1,17 @@
 /* Unit tests for the pure text guards that shape Yaadein's voice.
 
-   server.js starts listening on import, so rather than import it we lift the
-   helper source out and evaluate it in isolation. Slightly unusual, but it
-   means these tests run against the real implementation instead of a copy that
-   would quietly drift out of sync with it. */
-import { readFile } from "node:fs/promises";
+   These used to read server.js as a string, slice the function bodies out by
+   searching for the next lone closing brace, and eval the result — because
+   importing server.js starts an HTTP listener. That worked by accident:
+   stripFillers was never named in the list, it just happened to fall inside
+   the slice that began at `const FILLER =`.
 
-const src = await readFile(new URL("../app/server.js", import.meta.url), "utf8");
+   The guards now live in app/voice.js, which imports cleanly. */
+import { createRequire } from "node:module";
 
-/** Pull `name`'s declaration block out of server.js, from its start to the
-    first line that is a lone closing brace. */
-function lift(names) {
-  const chunks = [];
-  for (const name of names) {
-    const start = src.indexOf(name);
-    if (start < 0) throw new Error(`could not find ${name} in server.js`);
-    const end = src.indexOf("\n}", start);
-    if (end < 0) throw new Error(`could not find the end of ${name}`);
-    chunks.push(src.slice(start, end + 2));
-  }
-  return chunks.join("\n\n");
-}
-
-const body = lift([
-  "const FILLER =",
-  "function similarity(",
-  "function dedupeParagraphs(",
-  "function dropDanglingRecall(",
-]);
-const { stripFillers, dropDanglingRecall, dedupeParagraphs } = new Function(
-  `${body}\nreturn { stripFillers, dropDanglingRecall, dedupeParagraphs };`
-)();
+const { stripFillers, dropDanglingRecall, dedupeParagraphs } = createRequire(import.meta.url)(
+  "../app/voice.js"
+);
 
 let pass = 0,
   fail = 0;
