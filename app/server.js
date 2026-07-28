@@ -55,15 +55,44 @@ const CFG = {
 // The number IS the household: memories are scoped to it. TEST_PHONE is
 // public (shown in the app popup); the others stay private to the team.
 const TEST_PHONE = "1234567890";
+
+/* Two very different questions used to share one answer, and that was a
+   real leak: because TEST_PHONE sat in ALLOWED_PHONES, and ALLOWED_PHONES
+   was also the admin check, the number printed on our own site could read
+   /api/waitlist/list — every seat-holder's name, email and number.
+
+   So they are separate lists now:
+
+     ALLOWED_PHONES — may this number open a conversation?  TEST_PHONE
+       belongs here. It is on the site and in the submission doc, and it
+       carries no privilege beyond its own household.
+     ADMIN_PHONES   — may this number read everything we hold about other
+       people?  A number printed anywhere public must never answer yes.
+
+   ADMIN_PHONES defaults to the allowlist minus TEST_PHONE, so the leak is
+   closed with no env change on Railway. Set it explicitly to a number that
+   appears nowhere in this repo: 1231231239 and 1231231238 are in
+   .env.example and DECISIONS.md, which is not much better than being on the
+   site if anyone can read the repo. */
 const ALLOWED_PHONES = new Set(
-  (process.env.ALLOWED_PHONES || `${TEST_PHONE},1231231239,1231231238`)
+  [
+    /* Unconditional: the judges' demo number is published, so a change to
+       ALLOWED_PHONES must not be able to break it by accident. Safe now that
+       being on this list grants nothing but a conversation. */
+    TEST_PHONE,
+    ...(process.env.ALLOWED_PHONES || `${TEST_PHONE},1231231239,1231231238`).split(","),
+  ].map((s) => s.trim()).filter(Boolean)
+);
+const ADMIN_PHONES = new Set(
+  (process.env.ADMIN_PHONES || [...ALLOWED_PHONES].filter((p) => p !== TEST_PHONE).join(","))
     .split(",").map((s) => s.trim()).filter(Boolean)
 );
 // a number gets in if the family registered it (self-serve) or it's a
 // legacy admin number from the env allowlist
 const phoneOk = (p) =>
   typeof p === "string" && /^\d{10}$/.test(p) && (ALLOWED_PHONES.has(p) || db.isRegistered(p));
-const isAdmin = (p) => typeof p === "string" && ALLOWED_PHONES.has(p);
+const isAdmin = (p) =>
+  typeof p === "string" && p !== TEST_PHONE && ADMIN_PHONES.has(p);
 
 /* A real shared secret, for the routes where "knows a phone number" is not
    good enough. ADMIN_TOKEN is compared in constant time and never logged.
@@ -2165,7 +2194,14 @@ server.listen(PORT, () => {
   const wl = waitlistConfig();
   console.log(
     `   🪑 Waitlist ${db.waitlistCount()}/${wl.seats} seats taken` +
-    `   (${wl.founding} free forever, ${wl.free_months} months free for the rest)\n`
+    `   (${wl.founding} free forever, ${wl.free_months} months free for the rest)`
+  );
+  /* The count, never the numbers — this line ends up in Railway's log. It is
+     here because "who can read every seat-holder's email" is not something
+     anyone should have to read the source to find out. */
+  console.log(
+    `   🔐 ${ADMIN_PHONES.size} admin number(s)${process.env.ADMIN_PHONES ? "" : " (from ALLOWED_PHONES, minus the public demo line)"}` +
+    `   ${db.waitlistCount() > 0 && !process.env.ADMIN_PHONES ? "— set ADMIN_PHONES to a number that is not in the repo" : ""}\n`
   );
   ensureAcks().catch((e) => console.warn("[acks] init failed:", e.message));
 

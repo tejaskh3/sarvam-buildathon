@@ -40,8 +40,21 @@ function token(sub) {
    households — "Sheela Devi", owned by "user_alice" — into the real database
    and leaves them there. Every run added more. */
 const dataDir = mkdtempSync(join(tmpdir(), "yaadein-auth-"));
+/* This suite reads the admin-only registrations list, so it needs an admin
+   number — and it supplies its own rather than relying on whatever the env
+   defaults to. Two reasons: the assertions below stop depending on a default
+   that has already changed once, and no real admin number has to appear in
+   the repo. The 5-prefix is reserved (no Indian mobile starts with 5), so
+   this can never be a real family's number. */
+const ADMIN_PHONE = "5990000001";
 const srv = spawn("node", ["--experimental-sqlite", "app/server.js"], {
-  env: { ...process.env, PORT: "3111", CLERK_ISSUER: ISSUER, YAADEIN_DATA_DIR: dataDir },
+  env: {
+    ...process.env,
+    PORT: "3111",
+    CLERK_ISSUER: ISSUER,
+    YAADEIN_DATA_DIR: dataDir,
+    ADMIN_PHONES: ADMIN_PHONE,
+  },
   stdio: ["ignore", "pipe", "pipe"],
 });
 srv.stdout.on("data", () => {});
@@ -127,13 +140,46 @@ const strangerClaim = await fetch(`${API}/api/register`, {
    here — what must NOT happen is the seat having pre-registered it, because
    then this call is a takeover of somebody else's household rather than a
    fresh signup. The assertion that matters is the elder's name below. */
-const after = await (await fetch(`${API}/api/registrations?admin=1234567890`)).json().catch(() => ({ rows: [] }));
+/* No .catch(() => ({rows: []})) here, and the status is asserted first. That
+   fallback used to make both assertions below pass on an empty array: when
+   this route became admin-gated it started answering 403, and the suite went
+   green while checking nothing at all. A guard that cannot fail is not a
+   guard. */
+const regsRes = await fetch(`${API}/api/registrations?admin=${ADMIN_PHONE}`);
+ok("the registrations list is readable by an admin number", regsRes.status === 200, `got ${regsRes.status}`);
+const after = await regsRes.json();
+ok("…and it actually returned rows to assert against", Array.isArray(after.rows), JSON.stringify(after).slice(0, 120));
 const row = (after.rows || []).find((r) => r.phone === ORPHAN);
 ok("the seat did not pre-register the number", !row || row.owner_id, JSON.stringify(row || null).slice(0, 120));
 ok("…so no ownerless household exists to be seized",
    !(after.rows || []).some((r) => !r.owner_id && r.source === "waitlist"),
    JSON.stringify((after.rows || []).filter((r) => !r.owner_id)).slice(0, 160));
 void strangerClaim;
+
+/* ── the public demo number is not an admin ────────────────────────────
+   The whole point of splitting ALLOWED_PHONES into two lists. 1234567890 is
+   printed on the site, in app/public/*.html and in the submission doc, so it
+   must be able to hold a conversation and nothing else. Before the split it
+   could read every seat-holder's name, email and phone number. */
+console.log("\nthe number we print on the site is not an admin\n");
+
+for (const route of ["waitlist/list", "feedback/list", "notify/list", "registrations"]) {
+  const r = await fetch(`${API}/api/${route}?admin=1234567890`);
+  const body = await r.json().catch(() => ({}));
+  ok(`${route} refuses the public demo number`,
+     r.status === 403 && !body.rows, `got ${r.status} ${JSON.stringify(body).slice(0, 80)}`);
+}
+const sweep = await fetch(`${API}/api/checkin/sweep?admin=1234567890`, { method: "POST" });
+ok("checkin/sweep refuses the public demo number", sweep.status === 403, `got ${sweep.status}`);
+/* …but it must still be able to talk, or the demo on the site is dead. This
+   is the elder's route, not the family dashboard — /api/people is signed-in
+   only, so 401 there is correct and proves nothing either way. tts:false
+   keeps the check off Sarvam's bill. */
+const demoTalk = await fetch(`${API}/api/session/start`, {
+  method: "POST", headers: { "content-type": "application/json" },
+  body: JSON.stringify({ phone: "1234567890", tts: false }),
+});
+ok("the public demo number can still open a conversation", demoTalk.status === 200, `got ${demoTalk.status}`);
 
 console.log(`\n${fail === 0 ? "🎉" : "🔧"} ${pass} passed, ${fail} failed\n`);
 srv.kill(); jwks.close();
