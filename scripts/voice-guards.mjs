@@ -69,6 +69,13 @@ eq(
   "Us patang ka rang kaisa tha?"
 );
 
+/* She answers in whatever language they speak, so the filler list has to cover
+   those scripts too — the live demo shipped "அட, புனே!" straight to a caller. */
+eq(
+  "Tamil interjection comes off",
+  stripFillers("அட, புனே! அந்தப் பாடல்கள் எனக்குத் தெரிந்தவை."),
+  "புனே! அந்தப் பாடல்கள் எனக்குத் தெரிந்தவை."
+);
 eq(
   "Devanagari fillers too",
   stripFillers("अच्छा, आपने पुणे का ज़िक्र किया। वहाँ सुबह कैसी लगती थी?"),

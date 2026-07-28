@@ -11,6 +11,7 @@ const crypto = require("crypto");
 const db = require("./db");
 const clerk = require("./clerk");
 const dodo = require("./dodo");
+const checkin = require("./checkin");
 
 // ─── env ──────────────────────────────────────────────────────────
 const envPath = path.join(__dirname, ".env");
@@ -294,7 +295,16 @@ async function translate(text, target = "en-IN", source = "hi-IN") {
   });
   if (!r.ok) throw new Error(`translate ${r.status}: ${await r.text()}`);
   const out = (await r.json()).translated_text;
-  return out.replace(/«\s*YDN\s*»|«YDN»|YDN/g, target === "en-IN" ? "Yaadein" : "यादें");
+  return out.replace(/«\s*YDN\s*»|«YDN»|YDN/g, brandIn(target));
+}
+
+/* Her name, written in the script the sentence is in. यादें belongs in Hindi and
+   Marathi; dropping it into a Tamil sentence produced "நான் यादें" — two scripts
+   in four words, and unreadable to the very person being greeted. Everywhere
+   else the Latin spelling is the safe choice: recognisable, and it does not
+   claim to be a word in a language it isn't. */
+function brandIn(lang) {
+  return lang === "hi-IN" || lang === "mr-IN" ? "यादें" : "Yaadein";
 }
 
 // C6/C4 guard: recall-testing phrases must never reach her voice.
@@ -354,8 +364,34 @@ async function chatNoEcho(history, context, model) {
     );
     const better = dedupeParagraphs(retry);
     if (similarity(better, prevAgent) < similarity(reply, prevAgent)) reply = better;
+
+    /* If the retry is no better we used to ship the echo anyway — and that is
+       how the demo number came to answer two different things with the same
+       sentence, one word swapped. Keeping the closer of two duplicates is still
+       a duplicate. Rather than say the same thing twice to someone with memory
+       loss, drop to a question that cannot repeat: it is built from THEIR last
+       words, so it differs whenever the conversation does. */
+    if (similarity(reply, prevAgent) >= 0.7) {
+      const theirs = history.filter((m) => m.role === "user").at(-1)?.content || "";
+      console.warn(`[echo] regeneration failed too — falling back to an open question`);
+      reply = openQuestionAbout(theirs);
+    }
   }
   return reply;
+}
+
+/* Last-resort turn. Not a canned line: it reflects back the longest thing they
+   just said, which is the part they cared enough to elaborate on, and asks how
+   it felt — a question with no wrong answer and nothing to recall. */
+function openQuestionAbout(theirWords) {
+  const bit = String(theirWords)
+    .split(/[.?!।,]/)
+    .map((s) => s.trim())
+    .filter((s) => s.split(/\s+/).length >= 2)
+    .sort((a, b) => b.length - a.length)[0];
+  return bit
+    ? `${bit} — us waqt aapko kaisa lagta tha?`
+    : "Us waqt aapko kaisa lagta tha?";
 }
 
 // Does this text hand back a fact she already told us? A hint should be an
@@ -418,7 +454,10 @@ const FILLER =
   "(?:arre+|are+|oh+|hmm+|hm+|umm+|wah+|waah+|achha|acha|accha|" +
   "bahut\\s+(?:achha|achhi|sundar|pyara|pyari|badhiya|khoob)|kya\\s+baat\\s+hai|sach\\s+mein|" +
   "अच्छा|अरे|ओह|वाह|हम्म|क्या\\s+बात\\s+है|सच\\s+में|" +
-  "बहुत\\s+(?:अच्छा|अच्छी|सुंदर|प्यारा|प्यारी|बढ़िया))";
+  "बहुत\\s+(?:अच्छा|अच्छी|सुंदर|प्यारा|प्यारी|बढ़िया)|" +
+  // the other scripts she speaks in — Tamil "அட", Telugu "అరె", Kannada "ಅರೆ",
+  // Bengali "আরে", Malayalam "അയ്യോ". Caught the same way as the Hindi ones.
+  "அட|அடடா|ஆஹா|అరె|ఆహా|ಅರೆ|ಆಹಾ|আরে|আহা|അയ്യോ|ആഹാ)";
 // repeatable: "Arre wah! Kya baat hai!" is a pile of interjections, not one
 const FILLER_ONLY = new RegExp(`^(?:(?:${FILLER})[\\s,!?.।…—-]*)+$`, "i");
 const FILLER_LEAD = new RegExp(`^(?:(?:${FILLER})\\s*[,!?.।…—-]+\\s*)+`, "i");
@@ -896,8 +935,17 @@ const server = http.createServer(async (req, res) => {
         if (person) {
           sess.personId = person.id;
           sess.personName = person.name;
-          sess.lang = BULBUL_LANGS.has(person.lang) ? person.lang : null; // speak their language from word one
+          /* Speak their language from word one — except on the shared demo
+             number, which always opens in Hindi. Its stored language is
+             whatever the last stranger happened to speak, so honouring it
+             greets the next visitor in a language they may not read. This also
+             heals a number already poisoned that way, without wiping the
+             memories the demo needs in order to show recall at all. */
+          sess.lang = phone !== TEST_PHONE && BULBUL_LANGS.has(person.lang) ? person.lang : null;
           db.linkSession(id, person.id);
+          // they're talking again — close any open "gone quiet" worry so the
+          // family sees the resolution, not just the alarm
+          if (checkin.noteConversation(person.id)) console.log(`[checkin] ${person.name} is talking again`);
           sess.context = personContext(person.id, person.name, sess.lang);
           if (sess.context) sess.contract.RESUMED = true;
           openerInstruction = sess.context
@@ -988,10 +1036,16 @@ const server = http.createServer(async (req, res) => {
       if (!transcript.trim()) {
         return json(res, 200, { transcript: "", text: "", audio: null, note: "silence" });
       }
-      // language memory: remember how they speak; next session opens in it
+      /* Language memory: remember how they speak, so the next session opens in
+         it. For a real household that's the whole point.
+
+         But the demo number is shared by everyone, and persisting there meant
+         one Tamil visitor left the next Hindi visitor being answered in Tamil —
+         a stranger's language, mid-demo. So the shared number adapts within a
+         session and forgets afterwards. A family's own number still remembers. */
       if (language && BULBUL_LANGS.has(language) && language !== "en-IN") {
         sess.lang = language;
-        if (sess.personId) db.setPersonLang(sess.personId, language);
+        if (sess.personId && sess.phone !== TEST_PHONE) db.setPersonLang(sess.personId, language);
       }
 
       // keep the turn audio — every memory stays traceable to its recording (B2)
@@ -1276,6 +1330,36 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    /* ── check-ins: the family sets a cadence, we watch for silence ──
+       Under /api/people/:id/ on purpose — the ownership gate above already
+       covers that prefix, so a stranger can't read or set another
+       household's schedule. */
+    const chk = req.url.match(/^\/api\/people\/(\d+)\/checkin$/);
+    if (req.method === "GET" && chk) {
+      json(res, 200, checkin.status(Number(chk[1])));
+      return;
+    }
+    if (req.method === "POST" && chk) {
+      const b = JSON.parse((await readBody(req)).toString() || "{}");
+      db.setCheckin(Number(chk[1]), b);
+      json(res, 200, checkin.status(Number(chk[1])));
+      return;
+    }
+    const chkAck = req.url.match(/^\/api\/people\/(\d+)\/checkin\/ack$/);
+    if (req.method === "POST" && chkAck) {
+      db.ackCheckinEvents(Number(chkAck[1]));
+      json(res, 200, { ok: true });
+      return;
+    }
+    // force a sweep — admin only, so the alert path is demoable on the spot
+    // instead of waiting out a real cadence
+    if (req.method === "POST" && req.url.startsWith("/api/checkin/sweep")) {
+      const who = new URL(req.url, "http://x").searchParams.get("admin") || "";
+      if (!isAdmin(who)) return json(res, 403, { error: "admin_only" });
+      json(res, 200, await checkin.sweep());
+      return;
+    }
+
     // ── Session Scribe: record a HUMAN-run session → structured report ──
     if (req.method === "POST" && req.url === "/api/scribe/start") {
       const body = JSON.parse((await readBody(req)).toString() || "{}");
@@ -1487,7 +1571,16 @@ server.listen(PORT, () => {
     `   ${on(clerk.enabled())} Clerk sign-in ${clerk.enabled() ? `(${clerk.issuer()})` : "(set CLERK_PUBLISHABLE_KEY)"}` +
     `   ${on(dodo.configured())} Dodo webhook` +
     `   ${on(process.env.DODO_FAMILY_LINK)} Family checkout` +
+    `   ${on(checkin.dialerReady())} Check-in calls` +
     `   [${process.env.DODO_MODE || "test"} mode]\n`
   );
   ensureAcks().catch((e) => console.warn("[acks] init failed:", e.message));
+
+  /* Watch for silence. Ten minutes is fine granularity for cadences measured in
+     hours, and the sweep is idempotent — last_alert_at does the deduping, so a
+     restart mid-window can't double-alert. unref() so tests and scripts can
+     still exit. */
+  const sweep = () => checkin.sweep().catch((e) => console.warn("[checkin] sweep failed:", e.message));
+  setInterval(sweep, 10 * 60 * 1000).unref();
+  sweep(); // catch anyone who went quiet while the server was down
 });

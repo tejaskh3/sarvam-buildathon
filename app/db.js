@@ -6,7 +6,10 @@ const { DatabaseSync } = require("node:sqlite");
 const fs = require("fs");
 const path = require("path");
 
-const DATA_DIR = path.join(__dirname, "data");
+/* Overridable so tests can point at a throwaway directory instead of writing
+   into the live database. Unset in production, where Railway's volume is
+   mounted at app/data. */
+const DATA_DIR = process.env.YAADEIN_DATA_DIR || path.join(__dirname, "data");
 fs.mkdirSync(path.join(DATA_DIR, "audio"), { recursive: true });
 
 const db = new DatabaseSync(path.join(DATA_DIR, "yaadein.db"));
@@ -44,20 +47,6 @@ CREATE TABLE IF NOT EXISTS open_loops (
   created_at TEXT DEFAULT (datetime('now'))
 );
 `);
-
-// Phase 3/4 columns: revisit scheduling, recall trajectory, topic policy.
-// (ALTER guarded — runs once, no-ops after.)
-for (const ddl of [
-  "ALTER TABLE memories ADD COLUMN visit_count INTEGER DEFAULT 0",
-  "ALTER TABLE memories ADD COLUMN last_visited TEXT",
-  "ALTER TABLE memories ADD COLUMN prov_history TEXT", // e.g. 'USER_STATED,USER_ELABORATED,USER_CONFIRMED'
-  "ALTER TABLE memories ADD COLUMN safe_to_use INTEGER DEFAULT 1", // 0 = family marked AVOID (C3)
-  "ALTER TABLE people ADD COLUMN lang TEXT", // last detected language → next session opens in it
-  "ALTER TABLE people ADD COLUMN phone TEXT", // allowlisted 10-digit number this person belongs to
-  "ALTER TABLE registrations ADD COLUMN owner_id TEXT", // Clerk user who signed this household up
-]) {
-  try { db.exec(ddl); } catch { /* column exists */ }
-}
 
 // Phase 6: family-uploaded photos with context. Family context is the
 // source of truth (Sarvam Vision is a document OCR, not a photo captioner
@@ -151,6 +140,35 @@ CREATE TABLE IF NOT EXISTS scribe_sessions (
 );
 `);
 
+// Check-ins. The family sets how often their parent should be talking to
+// Yaadein; the engine watches whether it actually happens. The valuable signal
+// is the ABSENCE of a conversation — an elder who has gone quiet for two days
+// is the thing a daughter in another city cannot otherwise see.
+//
+// One row per elder (person_id is unique) because a household reasons about a
+// single cadence, not a list of overlapping ones.
+db.exec(`
+CREATE TABLE IF NOT EXISTS checkins (
+  person_id INTEGER PRIMARY KEY,
+  every_hours INTEGER NOT NULL DEFAULT 24,
+  quiet_from INTEGER DEFAULT 21,       -- IST hour: never disturb after this
+  quiet_to INTEGER DEFAULT 8,          -- IST hour: nor before this
+  active INTEGER DEFAULT 1,
+  last_alert_at TEXT,                  -- so a quiet week doesn't alert hourly
+  created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS checkin_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  person_id INTEGER NOT NULL,
+  kind TEXT NOT NULL,                  -- missed|resumed|dialled|dial_failed
+  detail TEXT,
+  hours_quiet REAL,                    -- how long since they last talked
+  acknowledged INTEGER DEFAULT 0,       -- family has seen it
+  created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_checkin_events_person ON checkin_events (person_id, created_at DESC);
+`);
+
 // CST engine (Epoch sprint): one row per themed-activity round. The elder
 // never sees a score — items (e.g. vegetables named) are harvested silently.
 // Category-naming counts double as a semantic-verbal-fluency measure.
@@ -196,6 +214,33 @@ CREATE TABLE IF NOT EXISTS variants (
   created_at TEXT DEFAULT (datetime('now'))
 );
 `);
+
+/* Added columns, applied AFTER every CREATE TABLE above — order matters.
+   These used to run halfway up the file, before `registrations` existed. On an
+   already-deployed database that was invisible (the table was created by an
+   earlier release, so the ALTER succeeded), but on a FRESH database the ALTER
+   hit a missing table, got swallowed by the catch, and left registrations with
+   no owner_id — which broke signup completely with "table registrations has no
+   column named owner_id". Any new deployment or reset volume would have hit it.
+
+   Each ALTER is still guarded so it no-ops once the column exists. */
+for (const ddl of [
+  "ALTER TABLE memories ADD COLUMN visit_count INTEGER DEFAULT 0",
+  "ALTER TABLE memories ADD COLUMN last_visited TEXT",
+  "ALTER TABLE memories ADD COLUMN prov_history TEXT", // e.g. 'USER_STATED,USER_ELABORATED,USER_CONFIRMED'
+  "ALTER TABLE memories ADD COLUMN safe_to_use INTEGER DEFAULT 1", // 0 = family marked AVOID (C3)
+  "ALTER TABLE people ADD COLUMN lang TEXT", // last detected language → next session opens in it
+  "ALTER TABLE people ADD COLUMN phone TEXT", // allowlisted 10-digit number this person belongs to
+  "ALTER TABLE registrations ADD COLUMN owner_id TEXT", // Clerk user who signed this household up
+]) {
+  try {
+    db.exec(ddl);
+  } catch (e) {
+    // "duplicate column" is the expected steady state; anything else is a real
+    // schema problem and must not be silent again
+    if (!/duplicate column/i.test(e.message)) console.warn(`[db] migration failed: ${ddl} → ${e.message}`);
+  }
+}
 
 // node:sqlite finalizes module-scope statements between uses — prepare per call.
 const q = new Proxy({
@@ -269,6 +314,84 @@ module.exports = {
 
   markReminderAcked(id) {
     db.prepare("UPDATE reminders SET ack_count = ack_count + 1 WHERE id = ?").run(id);
+  },
+
+  // ── check-ins ──
+  // Defaults are returned for an elder the family hasn't configured yet, so
+  // callers never have to special-case "no row".
+  getCheckin(personId) {
+    return (
+      db.prepare("SELECT * FROM checkins WHERE person_id = ?").get(personId) || {
+        person_id: personId, every_hours: 24, quiet_from: 21, quiet_to: 8, active: 0, last_alert_at: null,
+      }
+    );
+  },
+
+  setCheckin(personId, { every_hours, quiet_from, quiet_to, active }) {
+    const h = Math.min(168, Math.max(4, Number(every_hours) || 24)); // 4h … 1 week
+    const from = Math.min(23, Math.max(0, Number(quiet_from) ?? 21));
+    const to = Math.min(23, Math.max(0, Number(quiet_to) ?? 8));
+    db.prepare(
+      `INSERT INTO checkins (person_id, every_hours, quiet_from, quiet_to, active)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(person_id) DO UPDATE SET
+         every_hours = excluded.every_hours, quiet_from = excluded.quiet_from,
+         quiet_to = excluded.quiet_to, active = excluded.active`
+    ).run(personId, h, from, to, active ? 1 : 0);
+    return this.getCheckin(personId);
+  },
+
+  /* Hours since this elder last talked — the whole signal. Measured in SQL so
+     it can't drift from SQLite's own UTC clock. An elder who has never had a
+     session counts from when the schedule was created, otherwise switching a
+     brand-new household on would alert immediately. */
+  hoursQuiet(personId) {
+    const r = db.prepare(
+      `SELECT (julianday('now') - julianday(COALESCE(
+                 (SELECT MAX(started_at) FROM sessions WHERE person_id = ?),
+                 (SELECT created_at FROM checkins WHERE person_id = ?),
+                 datetime('now')))) * 24 AS h`
+    ).get(personId, personId);
+    return Math.max(0, r?.h ?? 0);
+  },
+
+  /** Every active schedule, with how long that elder has been quiet. */
+  activeCheckins() {
+    return db.prepare(
+      `SELECT c.*, p.name, p.phone,
+              (SELECT MAX(started_at) FROM sessions WHERE person_id = c.person_id) AS last_session,
+              (julianday('now') - julianday(COALESCE(
+                 (SELECT MAX(started_at) FROM sessions WHERE person_id = c.person_id),
+                 c.created_at))) * 24 AS hours_quiet
+         FROM checkins c JOIN people p ON p.id = c.person_id
+        WHERE c.active = 1`
+    ).all();
+  },
+
+  addCheckinEvent(personId, kind, detail, hoursQuiet) {
+    const r = db.prepare(
+      "INSERT INTO checkin_events (person_id, kind, detail, hours_quiet) VALUES (?, ?, ?, ?)"
+    ).run(personId, kind, detail || null, hoursQuiet == null ? null : Number(hoursQuiet));
+    return Number(r.lastInsertRowid);
+  },
+
+  /* `id DESC` is not decoration: created_at has one-second granularity, so a
+     "resumed" written in the same second as the "missed" it answers would sort
+     arbitrarily — and the dashboard reads events[0] as the current state. Ties
+     must break toward the newer row or the family sees "gone quiet" when the
+     truth is "talking again". */
+  checkinEventsFor(personId, limit = 20) {
+    return db.prepare(
+      "SELECT * FROM checkin_events WHERE person_id = ? ORDER BY created_at DESC, id DESC LIMIT ?"
+    ).all(personId, limit);
+  },
+
+  markCheckinAlerted(personId) {
+    db.prepare("UPDATE checkins SET last_alert_at = datetime('now') WHERE person_id = ?").run(personId);
+  },
+
+  ackCheckinEvents(personId) {
+    db.prepare("UPDATE checkin_events SET acknowledged = 1 WHERE person_id = ? AND acknowledged = 0").run(personId);
   },
 
   // ── Session Scribe ──
@@ -439,7 +562,7 @@ module.exports = {
     db.prepare("DELETE FROM variants WHERE memory_id IN (SELECT id FROM memories WHERE person_id = ?)").run(p.id);
     // every per-person table, or a reset leaves orphans that the next person
     // on this number can never see but that still occupy the number
-    for (const t of ["memories", "open_loops", "turns", "photos", "reminders", "engagement", "scribe_sessions"]) {
+    for (const t of ["memories", "open_loops", "turns", "photos", "reminders", "engagement", "scribe_sessions", "checkins", "checkin_events"]) {
       db.prepare(`DELETE FROM ${t} WHERE person_id = ?`).run(p.id);
     }
     db.prepare("DELETE FROM sessions WHERE person_id = ?").run(p.id);

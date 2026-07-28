@@ -9,6 +9,9 @@
 import crypto from "node:crypto";
 import http from "node:http";
 import { spawn } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const { publicKey, privateKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
 const KID = "test-kid-1";
@@ -33,8 +36,12 @@ function token(sub) {
   return `${head}.${body}.${sig}`;
 }
 
+/* A throwaway data directory. Without this the suite registers its fake
+   households — "Sheela Devi", owned by "user_alice" — into the real database
+   and leaves them there. Every run added more. */
+const dataDir = mkdtempSync(join(tmpdir(), "yaadein-auth-"));
 const srv = spawn("node", ["--experimental-sqlite", "app/server.js"], {
-  env: { ...process.env, PORT: "3111", CLERK_ISSUER: ISSUER },
+  env: { ...process.env, PORT: "3111", CLERK_ISSUER: ISSUER, YAADEIN_DATA_DIR: dataDir },
   stdio: ["ignore", "pipe", "pipe"],
 });
 srv.stdout.on("data", () => {});
@@ -90,4 +97,5 @@ ok("the ELDER can talk with no sign-in at all", elder.status === 200, `got ${eld
 
 console.log(`\n${fail === 0 ? "🎉" : "🔧"} ${pass} passed, ${fail} failed\n`);
 srv.kill(); jwks.close();
+rmSync(dataDir, { recursive: true, force: true });
 process.exit(fail ? 1 : 0);
