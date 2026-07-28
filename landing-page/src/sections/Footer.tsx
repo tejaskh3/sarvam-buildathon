@@ -103,7 +103,31 @@ export function Footer() {
             </span>
           </div>
 
-          <p className="font-mono text-[10.5px] tracking-[0.12em] text-white/35 uppercase">
+          {/* The full map lives here, including the two the top bar dropped
+              when it was trimmed to six — a section reachable only by scrolling
+              past it is a section nobody reaches. */}
+          <nav className="flex flex-wrap items-center gap-x-5 gap-y-2">
+            {[
+              ['#personas', 'Who this is for'],
+              ['#loop', 'How it works'],
+              ['#experience', 'How to use'],
+              ['#languages', '11 languages'],
+              ['#app', 'The app'],
+              ['#pricing', 'Pricing'],
+              ['#about', 'About us'],
+              ['#/waitlist', 'The first fifty'],
+            ].map(([href, label]) => (
+              <a
+                key={href}
+                href={href}
+                className="text-[12.5px] text-white/45 transition-colors hover:text-white"
+              >
+                {label}
+              </a>
+            ))}
+          </nav>
+
+          <p className="font-mono text-[10.5px] tracking-[0.12em] whitespace-nowrap text-white/35 uppercase">
             Built on Sarvam · Sarvam Buildathon
           </p>
         </div>

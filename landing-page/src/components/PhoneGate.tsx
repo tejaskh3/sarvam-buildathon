@@ -152,7 +152,11 @@ export function PhoneGate({
             <input
               autoFocus
               inputMode="numeric"
-              autoComplete="tel-national"
+              /* NOT "tel-national". This field is the ELDER's number, never the
+                 number of the person typing — and that hint makes Chrome offer
+                 its identity autofill, which on an Indian profile lists Aadhaar
+                 and business cards. Alarming to see, and never the right value. */
+              autoComplete="off"
               maxLength={10}
               placeholder="10-digit mobile number"
               value={phone}

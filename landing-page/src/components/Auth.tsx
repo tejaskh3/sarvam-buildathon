@@ -127,6 +127,64 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    underneath, and closing it puts them back exactly where they were. */
 const hide = { display: 'none' } as const
 
+/* Where the user was when they clicked sign in.
+   `fallbackRedirectUrl` alone is not enough: Google's OAuth round trip goes
+   away from our origin and comes back, and a URL fragment is never sent to a
+   server — so `#/family` can be dropped somewhere in that hop and you land on
+   the marketing page instead of the dashboard you were trying to reach. This
+   remembers the route out of band and restoreRoute() below puts it back.
+   sessionStorage, not localStorage: it should expire with the tab, or a
+   sign-in next week would teleport someone to wherever they were today. */
+const RETURN_KEY = 'yaadein-return-to'
+
+/* Stamped with the time, and that is load-bearing — see restoreRoute. */
+function rememberRoute() {
+  try {
+    const h = window.location.hash
+    if (h.startsWith('#/')) sessionStorage.setItem(RETURN_KEY, `${Date.now()}|${h}`)
+  } catch {
+    /* private browsing can throw on sessionStorage — losing the return route
+       is survivable, throwing on the way to sign-in is not */
+  }
+}
+
+/* How long after opening the sign-in overlay a stored route is still believable
+   as "they are mid-OAuth". The round trip is seconds; anything older is
+   somebody navigating on their own and must be left alone. */
+const RETURN_TTL_MS = 120_000
+
+/**
+ * Puts the user back on the route they were signing in to reach. Called once
+ * on boot from main.tsx, before React renders, so there is no flash of the
+ * landing page and no second history entry.
+ */
+export function restoreRoute() {
+  try {
+    const raw = sessionStorage.getItem(RETURN_KEY)
+    if (!raw) return
+    /* One shot, whatever happens next: a stored route must never be able to
+       redirect a second navigation. */
+    sessionStorage.removeItem(RETURN_KEY)
+
+    const [at, want] = raw.split('|')
+    if (!want) return
+
+    /* The check that stops this hijacking ordinary navigation. Without it,
+       opening sign-in on #/family and later typing the bare site URL bounced
+       you back to #/family — the stored route cannot tell an OAuth return from
+       someone deliberately going home, so it has to expire. */
+    if (Date.now() - Number(at) > RETURN_TTL_MS) return
+
+    /* And only if the fragment really did go missing. If it survived the hop,
+       this must not fight it. */
+    if (!window.location.hash.startsWith('#/')) {
+      history.replaceState(null, '', window.location.pathname + want)
+    }
+  } catch {
+    /* as above */
+  }
+}
+
 const MODAL_OPTS = () => ({
   appearance: {
     ...CLERK_LOOK,
@@ -155,7 +213,10 @@ const MODAL_OPTS = () => ({
 export function OpenSignIn({ className, children }: { className: string; children: ReactNode }) {
   const clerk = useClerk()
   return (
-    <button type="button" onClick={() => clerk.openSignIn(MODAL_OPTS())} className={className}>
+    <button type="button" onClick={() => {
+        rememberRoute()
+        clerk.openSignIn(MODAL_OPTS())
+      }} className={className}>
       {children}
     </button>
   )
@@ -165,6 +226,7 @@ export function OpenSignIn({ className, children }: { className: string; childre
 function AutoOpenSignIn() {
   const clerk = useClerk()
   useEffect(() => {
+    rememberRoute()
     clerk.openSignIn(MODAL_OPTS())
   }, [clerk])
   return null

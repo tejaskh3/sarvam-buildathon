@@ -5,6 +5,7 @@ import { Personas } from './sections/Personas'
 import { Loop } from './sections/Loop'
 import { Experience } from './sections/Experience'
 import { Coverage } from './sections/Coverage'
+import { Languages } from './sections/Languages'
 import { MobileApp } from './sections/MobileApp'
 import { Pricing } from './sections/Pricing'
 import { About } from './sections/About'
@@ -46,6 +47,10 @@ export default function App() {
         <Personas />
         <Loop />
         <Experience />
+        {/* Straight after "how to use it", before the family features: the
+            language question is the first thing an Indian family actually
+            asks, and it is the loudest thing Sarvam gives us. */}
+        <Languages />
         <Coverage />
         <MobileApp />
         <Pricing />

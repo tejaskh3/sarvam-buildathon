@@ -459,7 +459,8 @@ function SeatForm({
           <LangSelect value={lang} onChange={setLang} />
           <input
             inputMode="numeric"
-            autoComplete="tel-national"
+            /* their parent's number, not the signer-up's — see PhoneGate */
+            autoComplete="off"
             maxLength={10}
             placeholder="Their number (optional)"
             value={phone}

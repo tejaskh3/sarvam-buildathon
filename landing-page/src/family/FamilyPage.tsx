@@ -6,6 +6,7 @@ import { Logo } from '../components/Logo'
 import { API } from '../lib/api'
 import type { Person } from './types'
 import { HandoffCard } from './cards/HandoffCard'
+import { SetUpPanel } from './cards/SetUpPanel'
 import { OverviewPanel } from './OverviewPanel'
 import { BriefingTab } from './tabs/BriefingTab'
 import { SignalsTab } from './tabs/SignalsTab'
@@ -106,11 +107,24 @@ function FamilyDashboard() {
       .catch(() => setPeople([]))
   }, [phone])
 
+  /* A family with no household yet gets an explanation, not a modal.
+     This page used to throw up "Which number is this for?" over everything the
+     moment you arrived, which was the wrong question at the wrong time: you had
+     just signed in with an email and were being asked for a phone number, with
+     no stated reason and a greyed-out button. The honest version is a card that
+     says whose number it wants and why, on the page, with a way past it. */
+  if (!linking && !phone) {
+    return (
+      <main className="mx-auto w-full max-w-[880px] px-5 pb-20 sm:px-8">
+        <SetUpPanel onDone={setPhone} />
+      </main>
+    )
+  }
+
   return (
     <>
-      {/* asking for a phone number on top of a sign-in card would be two walls
-          at once, so the gate only appears once we are past the first */}
-      {!linking && !phone && gateOpen && (
+      {/* Reopened deliberately from "use a different number" — never on arrival. */}
+      {gateOpen && phone === null && (
         <PhoneGate api={API} onDone={setPhone} onClose={() => setGateOpen(false)} />
       )}
       <main className="mx-auto w-full max-w-[880px] px-5 pb-20 sm:px-8">
