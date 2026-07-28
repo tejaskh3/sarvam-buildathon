@@ -95,12 +95,11 @@ export function Languages() {
           </h2>
 
           <p className="mx-auto mt-7 max-w-2xl text-[16.5px] leading-relaxed text-pretty text-white/60 sm:text-[18px]">
-            An 82-year-old in Thanjavur is not going to practise her English so
-            software can understand her. Every sentence below is Yaadein&apos;s
-            most-asked question, put through{' '}
-            <span className="text-white">Sarvam&apos;s own translate endpoint</span> —
-            the same call the product makes when an English-reading child opens
-            their mother&apos;s Hindi memoir.
+            Nobody&apos;s grandmother should have to switch to English. Every
+            sentence below is Yaadein&apos;s most-asked question, run through{' '}
+            <span className="text-white">Sarvam&apos;s translate endpoint</span> —
+            the same call that fires when an English-reading child opens their
+            mother&apos;s Hindi memoir.
           </p>
         </Reveal>
 

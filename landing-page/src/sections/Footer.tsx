@@ -112,7 +112,7 @@ export function Footer() {
               ['#loop', 'How it works'],
               ['#experience', 'How to use'],
               ['#languages', '11 languages'],
-              ['#app', 'The app'],
+              ['#app', 'App'],
               ['#pricing', 'Pricing'],
               ['#about', 'About us'],
               ['#/waitlist', 'The first fifty'],

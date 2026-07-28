@@ -28,7 +28,7 @@ const links: Link[] = [
   { href: '#personas', label: 'Who this is for' },
   { href: '#loop', label: 'How it works' },
   { href: '#languages', label: '11 languages' },
-  { href: '#app', label: 'The app' },
+  { href: '#app', label: 'App' },
   { href: '#pricing', label: 'Pricing' },
   /* The bar has no room for another pill, so the one thing we most want
      clicked earns a dot instead of width. */
