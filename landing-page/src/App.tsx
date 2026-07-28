@@ -5,6 +5,7 @@ import { Personas } from './sections/Personas'
 import { Loop } from './sections/Loop'
 import { Experience } from './sections/Experience'
 import { Coverage } from './sections/Coverage'
+import { MobileApp } from './sections/MobileApp'
 import { Pricing } from './sections/Pricing'
 import { About } from './sections/About'
 import { Footer } from './sections/Footer'
@@ -39,6 +40,7 @@ export default function App() {
         <Loop />
         <Experience />
         <Coverage />
+        <MobileApp />
         <Pricing />
         <About />
       </main>

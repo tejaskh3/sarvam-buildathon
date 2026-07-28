@@ -61,23 +61,33 @@ export function Hero() {
             and the conversation carries on where it left off.
           </p>
 
+          {/* Two things to do, both as buttons.
+              The waitlist used to be a line of 10px uppercase mono under the
+              pills — the correct weight for a footnote, and this is the only
+              ask on the page that ends in a signed-up family. It carries the
+              live count because "49 of 50 left" is the reason to click now,
+              and it stays a ghost pill so "Talk to Yaadein" is still the one
+              filled control: hearing it work is what makes the seat worth
+              having. */}
           <div className="mt-9 flex flex-wrap items-center justify-center gap-2.5">
             <a href="#/try" className="pill pill-primary">
               Talk to Yaadein
               <Arrow />
             </a>
-            <a href="#loop" className="pill pill-ghost">
-              See how we remember
+            <a href="#/waitlist" className="pill pill-ghost">
+              <span className="bg-sr-green-600 live-dot h-1.5 w-1.5 rounded-full" />
+              Claim a free seat
+              <span className="text-tx-tertiary">
+                {seats.remaining} of {seats.seats} left
+              </span>
             </a>
           </div>
 
           <a
-            href="#/waitlist"
+            href="#loop"
             className="text-tx-secondary hover:text-tx mt-6 inline-flex items-center gap-2 font-mono text-[10px] tracking-[0.14em] uppercase transition-colors"
           >
-            <span className="bg-sr-green-600 live-dot h-1.5 w-1.5 rounded-full" />
-            {seats.remaining} of {seats.seats} free seats left
-            <span className="text-tx-tertiary">— join the first fifty</span>
+            See how we remember
           </a>
         </Reveal>
 

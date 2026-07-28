@@ -48,6 +48,9 @@ app/          the whole backend, zero npm dependencies
   db.js         SQLite schema + queries (node:sqlite)
   checkin.js    "has she gone quiet?" — alerts the family on silence
   dodo.js       payment webhooks, hand-rolled Standard Webhooks HMAC
+  email.js      Resend receipts (seat confirmed, app announcement)
+  prompts.js    the product's voice: system prompt, CST themes, orientation
+  voice.js      pure text guards — repetition, dangling recall, fillers
 realtime/     Pipecat WebRTC sidecar (Python, optional, local only)
 landing-page/ React + Vite site, and both signed-in surfaces
   src/try/        the elder's screen — one orb, nothing else
@@ -79,10 +82,14 @@ Then open `http://localhost:3000/#/try`.
 ## Tests
 
 ```bash
-npm test     # 55 tests, no framework, no network
+npm test     # 98 tests, no framework, no network
 ```
 
-Covering the voice guards (filler stripping, echo and repetition), the check-in engine (cadence clamping, quiet hours, dedupe, resume), and the auth boundary (that the elder can talk with no sign-in, and that one family cannot read another's memories).
+Covering the voice guards (filler stripping, echo and repetition), the check-in engine (cadence clamping, quiet hours, dedupe, resume), the auth boundary (that the elder can talk with no sign-in, and that one family cannot read another's memories), and the emails — including that a Founding Family is never quoted a date they start paying.
+
+```bash
+node scripts/email-preview.mjs   # renders every email to .preview-email/
+```
 
 ## Notable constraints
 

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { SignedIn, SignedOut, useUser } from '@clerk/clerk-react'
+import { useUser } from '@clerk/clerk-react'
 import { Ticker, Nav } from '../sections/Nav'
 import { Footer } from '../sections/Footer'
 import { Reveal, Section, SectionHead } from '../components/Primitives'
@@ -31,7 +31,16 @@ const FALLBACK: Counts = {
   founding_left: 10,
 }
 
-type Claim = { seat: number; tier: string; already: boolean }
+type Claim = {
+  seat: number
+  tier: string
+  already: boolean
+  /* Whether the server actually handed a confirmation to Resend. Promising an
+     inbox we never wrote to is worse than staying quiet, so the page only says
+     "check your email" when the send was attempted. */
+  emailed?: boolean
+  email?: string | null
+}
 
 export function WaitlistPage() {
   const [counts, setCounts] = useState<Counts>(FALLBACK)
@@ -255,17 +264,17 @@ function Key({ className, label }: { className: string; label: string }) {
 
 /* ── joining ──────────────────────────────────────────────────────── */
 
-/* The hero button. Signed out with Clerk on, it opens the Google overlay
-   immediately — scrolling someone down to a form whose first act is to ask them
-   to sign in is a step that exists only to be got through. Already signed in
-   (or Clerk off), it goes straight to the form. */
+/* The hero button. It scrolls to the form, in every state.
+   It used to open the Google overlay for anyone signed out — which put an
+   account in front of a waitlist. Signing in is now the shortcut offered
+   inside the form, not the toll gate in front of it. */
 function ClaimCta({ className }: { className: string }) {
   /* A button, not <a href="#seats">.
      The whole app is hash-routed (#/waitlist, #/try, #/family), so setting the
      hash to "#seats" matched no route and fell through to the landing page —
      the button threw you off the waitlist instead of scrolling down it. Moving
      the page without touching the hash is the fix. */
-  const toForm = (
+  return (
     <button
       type="button"
       onClick={() =>
@@ -276,18 +285,6 @@ function ClaimCta({ className }: { className: string }) {
       Claim your seat
       <Arrow />
     </button>
-  )
-  if (!clerkConfigured()) return toForm
-  return (
-    <>
-      <SignedOut>
-        <OpenSignIn className={className}>
-          <GoogleMark />
-          Claim your seat with Google
-        </OpenSignIn>
-      </SignedOut>
-      <SignedIn>{toForm}</SignedIn>
-    </>
   )
 }
 
@@ -301,6 +298,15 @@ function Join({ counts, onClaim }: { counts: Counts; onClaim: (c: Claim) => void
   return <ClerkJoin counts={counts} onClaim={onClaim} />
 }
 
+/* Signed in, the form is pre-filled from the Google account and keys the seat to
+   it. Signed out, the SAME form appears asking for a name and an email.
+
+   It used to show a sign-in wall instead, and the server backed that up with a
+   401 — so every stranger who read the page and wanted in was asked for a
+   Google account before they could join a free waitlist. The account is a
+   convenience (the seat survives a changed address, and it is how they get back
+   into the dashboard later), which makes it a shortcut to offer inside the form,
+   not a gate to put in front of it. */
 function ClerkJoin({ counts, onClaim }: { counts: Counts; onClaim: (c: Claim) => void }) {
   const { isLoaded, isSignedIn, user } = useUser()
 
@@ -316,36 +322,18 @@ function ClerkJoin({ counts, onClaim }: { counts: Counts; onClaim: (c: Claim) =>
     wasSignedIn.current = !!isSignedIn
   }, [isLoaded, isSignedIn])
 
-  if (!isSignedIn) {
-    return (
-      <div className="flex flex-col justify-center">
-        <p className="font-season text-tx text-[24px] leading-tight text-balance sm:text-[28px]">
-          One tap holds your seat.
-        </p>
-        <p className="text-tx-secondary mt-3 text-[14.5px] leading-relaxed text-pretty">
-          Sign in with Google so the seat has a name on it — that&apos;s also how
-          you&apos;ll get back into your family&apos;s dashboard later. We
-          don&apos;t ask for a card, because there is nothing to charge.
-        </p>
-        <OpenSignIn className="pill pill-primary mt-6 w-full justify-center !py-3 !text-[15px] sm:w-auto sm:self-start">
-          <GoogleMark />
-          Claim your seat with Google
-        </OpenSignIn>
-        <p className="text-tx-tertiary mt-3 text-[12.5px] leading-relaxed">
-          {counts.remaining} of {counts.seats} still open.
-        </p>
-      </div>
-    )
-  }
-
   return (
     <SeatForm
       counts={counts}
       onClaim={onClaim}
-      identity={{
-        name: user?.fullName || user?.firstName || '',
-        email: user?.primaryEmailAddress?.emailAddress || '',
-      }}
+      identity={
+        isSignedIn
+          ? {
+              name: user?.fullName || user?.firstName || '',
+              email: user?.primaryEmailAddress?.emailAddress || '',
+            }
+          : null
+      }
     />
   )
 }
@@ -396,7 +384,10 @@ function SeatForm({
       })
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j.message || 'Could not hold the seat.')
-      onClaim({ seat: j.seat, tier: j.tier, already: j.already })
+      onClaim({
+        seat: j.seat, tier: j.tier, already: j.already,
+        emailed: !!j.emailed, email: j.email ?? null,
+      })
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
     } finally {
@@ -417,6 +408,26 @@ function SeatForm({
           ? `Signed in as ${identity.email || identity.name}. Two more answers and the seat is yours.`
           : 'So the very first hello is warm, and in the right language.'}
       </p>
+
+      {/* The shortcut, offered — not required. Google fills the two fields
+          below and keys the seat to an account rather than an address, which is
+          what gets them back into the dashboard later. Skipping it costs
+          nothing but typing. */}
+      {!signedIn && clerkConfigured() && (
+        <div className="mt-5">
+          <OpenSignIn className="pill pill-ghost w-full justify-center !py-3 !text-[14.5px]">
+            <GoogleMark />
+            Continue with Google
+          </OpenSignIn>
+          <div className="mt-4 flex items-center gap-3">
+            <span className="bg-st-secondary h-px flex-1" />
+            <span className="text-tx-tertiary font-mono text-[9.5px] tracking-[0.16em] uppercase">
+              or just tell us
+            </span>
+            <span className="bg-st-secondary h-px flex-1" />
+          </div>
+        </div>
+      )}
 
       <div className="mt-5 space-y-3">
         {!signedIn && (
@@ -514,10 +525,32 @@ function Claimed({ claim, counts }: { claim: Claim; counts: Counts }) {
           </>
         )}
       </p>
-      <p className="text-tx-tertiary mt-3 text-[13px] leading-relaxed text-pretty">
-        We&apos;ll be in touch to set the phone up. Nothing to pay, nothing to
-        install.
-      </p>
+      {/* Only shown when the server actually handed a message to Resend —
+          `emailed` comes back false when no key is set, and a page that says
+          "check your email" about a mail nobody sent is a worse first
+          impression than saying nothing. */}
+      {claim.emailed ? (
+        <p className="border-st-secondary text-tx-secondary mt-5 flex items-start gap-2.5 rounded-xl border bg-white px-3.5 py-3 text-[13px] leading-relaxed">
+          <MailIcon />
+          <span>
+            <span className="text-tx font-medium">Check your email.</span> We&apos;ve
+            sent your seat confirmation
+            {claim.email ? (
+              <>
+                {' '}
+                to <span className="text-tx">{claim.email}</span>
+              </>
+            ) : null}
+            {' '}— it has everything that happens next. If it isn&apos;t there in a
+            minute, look in Promotions or spam.
+          </span>
+        </p>
+      ) : (
+        <p className="text-tx-tertiary mt-3 text-[13px] leading-relaxed text-pretty">
+          We&apos;ll be in touch to set the phone up. Nothing to pay, nothing to
+          install.
+        </p>
+      )}
       <div className="mt-6 flex flex-wrap gap-2.5">
         <a href="#/try" className="pill pill-primary !py-2.5 !text-[14px]">
           Talk to Yaadein now
@@ -675,7 +708,23 @@ function Arrow() {
   )
 }
 
-function GoogleMark() {
+export function MailIcon() {
+  return (
+    <svg
+      width="15"
+      height="15"
+      viewBox="0 0 16 16"
+      fill="none"
+      aria-hidden
+      className="text-tx-tertiary mt-[3px] shrink-0"
+    >
+      <rect x="1.5" y="3.5" width="13" height="9" rx="2" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M2.5 5 8 8.8 13.5 5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+export function GoogleMark() {
   return (
     <svg width="16" height="16" viewBox="0 0 18 18" aria-hidden>
       <path

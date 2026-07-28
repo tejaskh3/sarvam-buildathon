@@ -131,6 +131,21 @@ CREATE TABLE IF NOT EXISTS waitlist (
 );
 `);
 
+// "Tell me when the phone app is out." Separate from the waitlist on purpose:
+// a seat is a commitment to a household we will set up by hand, this is one
+// address wanting one announcement. Mixing them would put people who only
+// asked to be told about an app into a cohort of fifty families we owe work to.
+db.exec(`
+CREATE TABLE IF NOT EXISTS notify (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT NOT NULL,
+  topic TEXT NOT NULL DEFAULT 'mobile-app',
+  platform TEXT,
+  created_at TEXT DEFAULT (datetime('now')),
+  UNIQUE (email, topic)
+);
+`);
+
 // Reminders the family sets, woven into conversation — never an alarm.
 // At most one per session; an acknowledgment bumps ack_count so the family
 // can see adherence without anyone being nagged.
@@ -616,6 +631,31 @@ module.exports = {
 
   waitlistAll() {
     return db.prepare("SELECT * FROM waitlist ORDER BY seat").all();
+  },
+
+  // ── "tell me when the app is out" ──
+  // Idempotent: asking twice is not an error and must not look like one, so a
+  // repeat submit reports `already` and the UI thanks them again either way.
+  joinNotify({ email, topic = "mobile-app", platform = null }) {
+    const mail = String(email || "").trim().toLowerCase();
+    const existing = db
+      .prepare("SELECT id FROM notify WHERE email = ? AND topic = ?")
+      .get(mail, topic);
+    if (existing) {
+      // they may have switched phones since — keep the latest answer
+      if (platform) db.prepare("UPDATE notify SET platform = ? WHERE id = ?").run(platform, existing.id);
+      return { already: true };
+    }
+    db.prepare("INSERT INTO notify (email, topic, platform) VALUES (?, ?, ?)").run(mail, topic, platform);
+    return { already: false };
+  },
+
+  notifyCount(topic = "mobile-app") {
+    return db.prepare("SELECT COUNT(*) c FROM notify WHERE topic = ?").get(topic).c || 0;
+  },
+
+  notifyAll() {
+    return db.prepare("SELECT * FROM notify ORDER BY created_at DESC").all();
   },
 
   // admin traction view: every family + their usage

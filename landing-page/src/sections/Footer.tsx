@@ -35,11 +35,25 @@ export function Footer() {
               >
                 Talk to Yaadein
               </a>
+              {/* The last thing on the page asks for the seat. This used to be
+                  "See how we remember", which sent someone who had just read
+                  the whole page back up to the middle of it. */}
+              {/* The footer also renders ON the waitlist page, where setting the
+                  hash to the one it already has fires no hashchange and moves
+                  nothing — the button would look dead. There, scroll to the
+                  form instead. */}
               <a
-                href="#loop"
+                href="#/waitlist"
+                onClick={() => {
+                  if (window.location.hash === '#/waitlist')
+                    document
+                      .getElementById('seats')
+                      ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                }}
                 className="pill border border-white/20 bg-transparent text-white hover:border-white/60"
               >
-                See how we remember
+                <span className="bg-sr-green-600 live-dot h-1.5 w-1.5 rounded-full" />
+                Claim a free seat
               </a>
             </div>
           </Reveal>

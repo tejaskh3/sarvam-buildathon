@@ -17,3 +17,8 @@ app/.env
 # is lost by not tracking it. Railway keeps this on a persistent volume and
 # .railwayignore already excludes it from deploys.
 app/data/
+
+# Rendered email templates, for eyeballing in a browser: scripts/email-preview.mjs
+.preview-email/
+# Throwaway SQLite file the email tests build and delete
+.test-notify/

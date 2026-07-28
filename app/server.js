@@ -12,6 +12,7 @@ const db = require("./db");
 const clerk = require("./clerk");
 const dodo = require("./dodo");
 const checkin = require("./checkin");
+const email = require("./email");
 const {
   similarity, openQuestionAbout, dedupeParagraphs, dropDanglingRecall, stripFillers,
 } = require("./voice");
@@ -1130,9 +1131,19 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // Claim a seat. Clerk-optional in the same way everything else here is: with
-    // Clerk on, the seat is keyed to a real Google account and one account can
-    // hold one seat; with it off, the email address does that job.
+    // Claim a seat.
+    //
+    // Signing in is OPTIONAL, and that is the whole point of this route. It used
+    // to 401 anybody without a Clerk session, which meant a stranger who had
+    // just read the page had to hand over a Google account before they could
+    // join a waitlist — the funnel was shut for every new visitor, which is the
+    // only kind this page has. An email address is enough to hold a seat.
+    //
+    // A session, when there is one, is still worth more than an email: it keys
+    // the seat to a real account, survives a changed address, and is what the
+    // family dashboard recognises later. So we take it when offered and key the
+    // row by owner_id; otherwise the email does that job (both columns are
+    // UNIQUE, see the note on the table).
     if (req.method === "POST" && req.url === "/api/waitlist") {
       let body = {};
       try { body = JSON.parse((await readBody(req)).toString() || "{}"); } catch { /* empty */ }
@@ -1147,16 +1158,17 @@ const server = http.createServer(async (req, res) => {
       let ownerId = null;
       if (clerk.enabled()) {
         const who = await clerk.userFor(req);
-        if (!who) return json(res, 401, { error: "sign_in_required", message: "Please sign in to hold a seat." });
-        ownerId = who.userId;
+        if (who) ownerId = who.userId;
       }
 
       // The Clerk session token carries no email — there is no JWT template, so
       // clerk.userFor() returns the user id and nothing else. The browser sends
       // the address from useUser(). That makes it contact data, not identity:
-      // ownerId is what keys the row whenever Clerk is on.
-      const email = String(body.email || "").trim().toLowerCase().slice(0, 120);
-      const emailOk = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);
+      // ownerId is what keys the row whenever we have one.
+      const mail = String(body.email || "").trim().toLowerCase().slice(0, 120);
+      const emailOk = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mail);
+      // With no session, an address is the only way we can ever reach them, so
+      // it is required. With a session we can find them again either way.
       if (!ownerId && !emailOk) {
         return json(res, 400, { error: "bad_email", message: "Please enter an email address we can reach you on." });
       }
@@ -1168,7 +1180,7 @@ const server = http.createServer(async (req, res) => {
 
       const seat = db.joinWaitlist({
         owner_id: ownerId,
-        email: emailOk ? email : null,
+        email: emailOk ? mail : null,
         name: familyName,
         elder_name: elderName,
         language,
@@ -1197,7 +1209,62 @@ const server = http.createServer(async (req, res) => {
         `[waitlist] seat #${seat.seat} (${seat.tier})${seat.already ? " returning" : ""} ` +
         `elder=${elderName || "?"} lang=${language || "?"} — ${taken}/${cfg.seats} taken`
       );
-      json(res, 200, { ok: true, ...seat, ...cfg, taken, remaining: Math.max(0, cfg.seats - taken) });
+
+      // Not awaited. The seat is already theirs; making them watch a spinner
+      // while we talk to Resend would trade the thing that matters for the
+      // receipt. `emailed` tells the page whether to promise an inbox — a
+      // "check your email" that never arrives is worse than not mentioning it.
+      const willEmail = emailOk && email.configured();
+      if (willEmail) {
+        void email.sendSeat(mail, {
+          name: familyName, elder_name: elderName, seat: seat.seat, tier: seat.tier,
+          seats: cfg.seats, free_months: cfg.free_months, founding: cfg.founding,
+          already: seat.already,
+        });
+      }
+
+      json(res, 200, {
+        ok: true, ...seat, ...cfg, taken,
+        remaining: Math.max(0, cfg.seats - taken),
+        emailed: willEmail, email: emailOk ? mail : null,
+      });
+      return;
+    }
+
+    // "Tell me when the phone app is out." One field, no account, no seat.
+    if (req.method === "POST" && req.url === "/api/notify") {
+      let body = {};
+      try { body = JSON.parse((await readBody(req)).toString() || "{}"); } catch { /* empty */ }
+
+      const ip = (req.headers["x-forwarded-for"] || "").split(",")[0].trim() || req.socket.remoteAddress || "?";
+      if (!registerAllowed(ip)) {
+        return json(res, 429, { error: "too_many", message: "Too many sign-ups from here. Please try again later." });
+      }
+
+      const mail = String(body.email || "").trim().toLowerCase().slice(0, 120);
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mail)) {
+        return json(res, 400, { error: "bad_email", message: "Please enter an email address we can reach you on." });
+      }
+      const platform = ["ios", "android", "either"].includes(body.platform) ? body.platform : null;
+      const topic = "mobile-app";
+
+      const r = db.joinNotify({ email: mail, topic, platform });
+      const count = db.notifyCount(topic);
+      console.log(`[notify] ${mail} ${platform || "?"}${r.already ? " (already)" : ""} — ${count} waiting`);
+
+      const willEmail = email.configured();
+      if (willEmail) void email.sendAppNotify(mail, { platform });
+
+      json(res, 200, { ok: true, ...r, count, emailed: willEmail });
+      return;
+    }
+
+    // Who is waiting on the app. Admin-gated like the other lists.
+    const nl = req.url.match(/^\/api\/notify\/list\?admin=(\d+)$/);
+    if (req.method === "GET" && nl) {
+      if (!isAdmin(nl[1])) return json(res, 403, { error: "not_admin" });
+      const rows = db.notifyAll();
+      json(res, 200, { count: rows.length, rows });
       return;
     }
 
