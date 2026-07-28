@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Reveal } from '../components/ui'
+import { Reveal } from '../components/Primitives'
 import { SessionDemo } from './SessionDemo'
 
 const API =

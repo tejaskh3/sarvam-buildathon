@@ -1,4 +1,4 @@
-import { Reveal, Section, SectionHead } from '../components/ui'
+import { Reveal, Section, SectionHead } from '../components/Primitives'
 
 /* About us — Tejas's copy, verbatim. The four principles get cards;
    everything else is quiet long-form prose. */

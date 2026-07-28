@@ -1,5 +1,5 @@
 import { personas } from '../data'
-import { Reveal, Section, SectionHead, toneRing } from '../components/ui'
+import { Reveal, Section, SectionHead, toneRing } from '../components/Primitives'
 
 export function Personas() {
   return (

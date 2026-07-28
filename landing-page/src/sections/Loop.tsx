@@ -1,5 +1,5 @@
 import { loop } from '../data'
-import { Reveal, Section, SectionHead } from '../components/ui'
+import { Reveal, Section, SectionHead } from '../components/Primitives'
 
 export function Loop() {
   return (

@@ -1,4 +1,4 @@
-import { Reveal } from '../components/ui'
+import { Reveal } from '../components/Primitives'
 import { LogoPlate } from '../components/Logo'
 
 export function Footer() {

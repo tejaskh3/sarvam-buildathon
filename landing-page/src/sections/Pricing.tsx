@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Reveal, Section, SectionHead } from '../components/ui'
+import { Reveal, Section, SectionHead } from '../components/Primitives'
 import { getStoredPhone } from '../components/PhoneGate'
 
 /* ------------------------------------------------------------------
