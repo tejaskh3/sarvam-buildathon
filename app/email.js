@@ -25,12 +25,22 @@
 
 const RESEND = "https://api.resend.com/emails";
 
+/* All four read process.env at CALL time, never at module load — the same
+   pattern as dodo.js and clerk.js, and not a style choice.
+   server.js requires this module before it parses app/.env, so a top-level
+   `const FROM = process.env.EMAIL_FROM || …` captured the fallback every time
+   locally: mail went out from the sandbox sender instead of the verified
+   domain, and REPLY_TO was null, which silently disabled the feedback alert
+   altogether. Production hid it, because Railway injects variables into the
+   process before Node starts. */
+
 /* Resend's sandbox sender works with no domain verified, but it can only
    deliver to the account owner's own address. Set EMAIL_FROM to a verified
    domain before pointing this at real families. */
-const FROM = process.env.EMAIL_FROM || "Yaadein <onboarding@resend.dev>";
-const REPLY_TO = process.env.EMAIL_REPLY_TO || null;
-const SITE = process.env.PUBLIC_URL || "https://sarvam-buildathon-production.up.railway.app";
+const from = () => process.env.EMAIL_FROM || "Yaadein <onboarding@resend.dev>";
+const replyTo = () => process.env.EMAIL_REPLY_TO || null;
+const site = () =>
+  process.env.PUBLIC_URL || "https://sarvam-buildathon-production.up.railway.app";
 
 const configured = () => !!(process.env.RESEND_API_KEY || "").trim();
 
@@ -201,7 +211,7 @@ function seatEmail(d) {
       You don&rsquo;t have to wait for us, though. Yaadein is live right now:
     </p>
 
-    ${button(`${SITE}/#/try`, "Hear it talk →")}
+    ${button(`${site()}/#/try`, "Hear it talk →")}
 
     <p style="margin:22px 0 0;padding-top:20px;border-top:1px solid ${C.rule};font-family:${SANS};font-size:13px;line-height:1.6;color:${C.faint};">
       One thing worth knowing before you try it: Yaadein never tests anyone. If ${them ? esc(them) : "they"}
@@ -230,7 +240,7 @@ function seatEmail(d) {
       "",
       `Next: we'll write to you to set the phone up. It takes five minutes and there's nothing to install.`,
       "",
-      `You can hear Yaadein talk right now: ${SITE}/#/try`,
+      `You can hear Yaadein talk right now: ${site()}/#/try`,
       "",
       `Yaadein never tests anyone. If they can't recall something it doesn't correct them — it moves somewhere warmer and quietly notes it for you.`,
     ].join("\n"),
@@ -262,12 +272,12 @@ function appEmail(d) {
       one link, and it opens straight into the conversation.
     </p>
 
-    ${button(`${SITE}/#/try`, "Try it in the browser →")}
+    ${button(`${site()}/#/try`, "Try it in the browser →")}
 
     <p style="margin:24px 0 0;padding-top:20px;border-top:1px solid ${C.rule};font-family:${SANS};font-size:13px;line-height:1.6;color:${C.faint};">
       If you&rsquo;re setting Yaadein up for a parent, the ${esc("first fifty")} cohort is still open &mdash;
       three months free, and the first ten families never pay.
-      <a href="${SITE}/#/waitlist" style="color:${C.indigo};text-decoration:underline;">Claim a seat</a>.
+      <a href="${site()}/#/waitlist" style="color:${C.indigo};text-decoration:underline;">Claim a seat</a>.
     </p>`;
 
   return {
@@ -278,9 +288,9 @@ function appEmail(d) {
       "",
       `One email, when the app is actually downloadable. Not a countdown, not a newsletter.`,
       "",
-      `You don't need the app to start — everything works in the browser today: ${SITE}/#/try`,
+      `You don't need the app to start — everything works in the browser today: ${site()}/#/try`,
       "",
-      `Setting Yaadein up for a parent? The first-fifty cohort is still open — three months free, first ten never pay: ${SITE}/#/waitlist`,
+      `Setting Yaadein up for a parent? The first-fifty cohort is still open — three months free, first ten never pay: ${site()}/#/waitlist`,
     ].join("\n"),
   };
 }
@@ -313,12 +323,12 @@ async function send(to, { subject, html, text }) {
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        from: FROM,
+        from: from(),
         to: [to],
         subject,
         html,
         text,
-        ...(REPLY_TO ? { reply_to: REPLY_TO } : {}),
+        ...(replyTo() ? { reply_to: replyTo() } : {}),
       }),
       /* Resend answers in well under a second. The ceiling is low because a
          family is waiting on this response: if Resend is having a bad day they
@@ -343,7 +353,12 @@ module.exports = {
   sendSeat: (to, d) => send(to, seatEmail(d)),
   /** Mobile-app notify confirmation. Fire-and-forget. */
   sendAppNotify: (to, d) => send(to, appEmail(d)),
-  /* exported for scripts/email-preview.mjs, which writes both to disk so the
+  /* Feedback deliberately sends NOTHING. It is stored and read from the table
+     instead — Resend's free tier is 100 messages a day, and spending it on
+     alerts about rows we can query is how a seat confirmation ends up
+     undelivered on the day it matters. See /api/feedback in server.js. */
+
+  /* exported for scripts/email-preview.mjs, which writes them to disk so the
      templates can be eyeballed without sending anything */
   seatEmail,
   appEmail,

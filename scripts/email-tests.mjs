@@ -26,25 +26,30 @@ const SEAT = { seats: 50, free_months: 3, founding: 10 };
 
 console.log("\nno template holes\n");
 
+/* The third element is what this KIND of mail owes its reader. Both of these go
+   OUT to a family, so both must carry a way back into the product — an email
+   about a product with no link to it is a dead end. */
 const every = [
-  ["seat, founding", email.seatEmail({ name: "Tejas Gupta", elder_name: "Kamala", seat: 4, tier: "founding", ...SEAT })],
-  ["seat, regular", email.seatEmail({ name: "Priya", elder_name: "Appa", seat: 23, tier: "seat", ...SEAT })],
-  ["seat, no names at all", email.seatEmail({ seat: 37, tier: "seat", ...SEAT })],
-  ["app, iOS", email.appEmail({ platform: "ios" })],
-  ["app, no platform", email.appEmail({})],
+  ["seat, founding", email.seatEmail({ name: "Tejas Gupta", elder_name: "Kamala", seat: 4, tier: "founding", ...SEAT }), { minText: 200, needsLink: true }],
+  ["seat, regular", email.seatEmail({ name: "Priya", elder_name: "Appa", seat: 23, tier: "seat", ...SEAT }), { minText: 200, needsLink: true }],
+  ["seat, no names at all", email.seatEmail({ seat: 37, tier: "seat", ...SEAT }), { minText: 200, needsLink: true }],
+  ["app, iOS", email.appEmail({ platform: "ios" }), { minText: 150, needsLink: true }],
+  ["app, no platform", email.appEmail({}), { minText: 150, needsLink: true }],
 ];
 
-for (const [label, m] of every) {
+for (const [label, m, want] of every) {
   const all = `${m.subject}\n${m.html}\n${m.text}`;
   ok(`${label} — no undefined/null/NaN leaked in`, !/undefined|null|NaN/.test(all),
      (all.match(/.{0,40}(undefined|null|NaN).{0,40}/) || [])[0]);
-  ok(`${label} — has a subject, html and text part`,
-     !!m.subject && m.html.length > 500 && m.text.length > 80);
+  ok(`${label} — has a subject, html and a plain-text part`,
+     !!m.subject && m.html.length > 500 && m.text.length >= want.minText,
+     `text ${m.text.length} chars, wanted ≥ ${want.minText}`);
   /* A relative href is meaningless in an inbox: there is no page it is
-     relative TO. Every link has to be absolute. */
+     relative TO. Every link that exists has to be absolute — and the outbound
+     mails must actually have one, or they are a dead end. */
   const hrefs = [...m.html.matchAll(/href="([^"]+)"/g)].map((x) => x[1]);
-  ok(`${label} — every link absolute (${hrefs.length})`,
-     hrefs.length > 0 && hrefs.every((h) => /^https?:\/\//.test(h)),
+  ok(`${label} — links absolute, ${want.needsLink ? "and at least one" : "none expected"} (${hrefs.length})`,
+     hrefs.every((h) => /^https?:\/\//.test(h)) && (want.needsLink ? hrefs.length > 0 : true),
      hrefs.filter((h) => !/^https?:\/\//.test(h)).join(", "));
   ok(`${label} — one <html>, closed`,
      (m.html.match(/<html/g) || []).length === 1 && m.html.trim().endsWith("</html>"));
@@ -102,6 +107,42 @@ const sent = await email.sendSeat("nobody@example.com", { seat: 1, tier: "seat",
 ok("sendSeat resolves false instead of throwing", sent === false);
 if (savedKey) process.env.RESEND_API_KEY = savedKey;
 
+/* ── feedback sends nothing ───────────────────────────────────────── */
+
+console.log("\nfeedback is stored, never emailed\n");
+
+/* Guarding a decision, not an implementation: feedback goes in the table and is
+   read with /api/feedback/list. Resend's free tier is 100 messages a day, and
+   spending it on alerts about rows we can query is how a seat confirmation ends
+   up undelivered on the day it matters. If someone re-adds a feedback email,
+   this fails and they have to argue with the reason first. */
+ok("no feedback template is exported", email.feedbackEmail === undefined);
+ok("no feedback sender is exported", email.sendFeedbackAlert === undefined);
+const senders = Object.keys(email).filter((k) => k.startsWith("send")).sort().join(",");
+ok("the only senders are the two family-facing ones", senders === "sendAppNotify,sendSeat", senders);
+
+/* ── config is read at send time, not at import ───────────────────── */
+
+console.log("\nconfig is read late, not at import\n");
+
+/* The regression this guards actually shipped: server.js requires this module
+   BEFORE it parses app/.env, so a top-level `const FROM = process.env.EMAIL_FROM
+   || …` captured the fallback every time — mail went out from the sandbox sender
+   instead of the verified domain, and every link in it pointed at the
+   railway.app URL. Production hid it, because Railway injects variables before
+   Node starts. Reading env inside the accessors is what makes load order
+   irrelevant, and this is the only test that can tell. */
+delete require_.cache[require_.resolve("../app/email.js")];
+const savedUrl = process.env.PUBLIC_URL;
+delete process.env.PUBLIC_URL;
+const late = require_("../app/email.js");              // imported with it unset…
+process.env.PUBLIC_URL = "https://set-after-import.example";  // …set afterwards
+const lateMail = late.seatEmail({ name: "A", seat: 1, tier: "seat", ...SEAT });
+ok("a PUBLIC_URL set after import still reaches the links",
+   lateMail.html.includes("https://set-after-import.example"),
+   (lateMail.html.match(/href="([^"]+)"/) || [])[1]);
+if (savedUrl) process.env.PUBLIC_URL = savedUrl;
+else delete process.env.PUBLIC_URL;
 /* ── the notify list ──────────────────────────────────────────────── */
 
 console.log("\nthe notify list\n");

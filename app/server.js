@@ -112,6 +112,19 @@ function registerAllowed(ip) {
   return hits.length <= 12;
 }
 
+// Feedback gets its own budget, and a looser one. Someone reporting a bug may
+// well have three things to say, and none of them should cost them the ability
+// to claim a seat afterwards.
+const fbHits = new Map();
+function feedbackAllowed(ip) {
+  const now = Date.now();
+  const hits = (fbHits.get(ip) || []).filter((t) => now - t < 3600_000);
+  hits.push(now);
+  fbHits.set(ip, hits);
+  if (fbHits.size > 5000) fbHits.clear();
+  return hits.length <= 20;
+}
+
 // The first-fifty cohort. Dodo KYC is still under review so nobody can be
 // charged yet — rather than apologise for that, the cohort is the offer:
 // WAITLIST_SEATS families join free, all of them get WAITLIST_FREE_MONTHS
@@ -1262,6 +1275,58 @@ const server = http.createServer(async (req, res) => {
       const emailed = await email.sendAppNotify(mail, { platform });
 
       json(res, 200, { ok: true, ...r, count, emailed });
+      return;
+    }
+
+    // The floating feedback widget. No account, no email required — asking a
+    // stranger to identify themselves before they can tell you something is
+    // broken is how you stop hearing that things are broken.
+    if (req.method === "POST" && req.url === "/api/feedback") {
+      let body = {};
+      try { body = JSON.parse((await readBody(req)).toString() || "{}"); } catch { /* empty */ }
+
+      const ip = (req.headers["x-forwarded-for"] || "").split(",")[0].trim() || req.socket.remoteAddress || "?";
+      // Its OWN limiter, not registerAllowed(). Sharing that budget would mean
+      // someone who sent two notes then tried to claim a seat got told there
+      // had been "too many sign-ups from here".
+      if (!feedbackAllowed(ip)) {
+        return json(res, 429, { error: "too_many", message: "Thanks — that's plenty for now. Try again later." });
+      }
+
+      const message = String(body.message || "").trim().slice(0, 2000);
+      if (message.length < 3) {
+        return json(res, 400, { error: "empty", message: "Tell us a little more and we'll read it." });
+      }
+      const sentiment = ["love", "confused", "broken", "idea"].includes(body.sentiment) ? body.sentiment : null;
+      const mail = String(body.email || "").trim().toLowerCase().slice(0, 120);
+      const emailOk = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mail);
+      const page = String(body.page || "").trim().slice(0, 120);
+
+      let ownerId = null;
+      if (clerk.enabled()) {
+        const who = await clerk.userFor(req);
+        if (who) ownerId = who.userId;
+      }
+
+      db.addFeedback({
+        message, sentiment, email: emailOk ? mail : null, page, owner_id: ownerId,
+      });
+      // Logged and stored, deliberately NOT emailed. Resend's free tier is 100
+      // messages a day and a seat confirmation is worth more than an alert
+      // about something we can read straight out of the table:
+      //   GET /api/feedback/list?admin=<allowlisted number>
+      console.log(`[feedback] ${sentiment || "?"} from ${emailOk ? mail : "anon"} on ${page || "?"}: ${message.slice(0, 80)}`);
+
+      json(res, 200, { ok: true });
+      return;
+    }
+
+    // Everything people have told us. Admin-gated like the other lists.
+    const fl = req.url.match(/^\/api\/feedback\/list\?admin=(\d+)$/);
+    if (req.method === "GET" && fl) {
+      if (!isAdmin(fl[1])) return json(res, 403, { error: "not_admin" });
+      const rows = db.feedbackAll();
+      json(res, 200, { count: rows.length, rows });
       return;
     }
 

@@ -146,6 +146,22 @@ CREATE TABLE IF NOT EXISTS notify (
 );
 `);
 
+// Free-text feedback from the floating widget. Deliberately thin: no thread, no
+// status, no reply — a place for someone to say one thing and be heard. `page`
+// records where they were standing when they said it, which is most of the
+// context we need and costs them nothing to supply.
+db.exec(`
+CREATE TABLE IF NOT EXISTS feedback (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  message TEXT NOT NULL,
+  sentiment TEXT,                      -- love|confused|broken|idea
+  email TEXT,
+  page TEXT,
+  owner_id TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+`);
+
 // Reminders the family sets, woven into conversation — never an alarm.
 // At most one per session; an acknowledgment bumps ack_count so the family
 // can see adherence without anyone being nagged.
@@ -656,6 +672,24 @@ module.exports = {
 
   notifyAll() {
     return db.prepare("SELECT * FROM notify ORDER BY created_at DESC").all();
+  },
+
+  // ── feedback ──
+  // Not idempotent, unlike the lists above: if someone says two things they
+  // meant to say two things.
+  addFeedback({ message, sentiment = null, email = null, page = null, owner_id = null }) {
+    const r = db.prepare(
+      "INSERT INTO feedback (message, sentiment, email, page, owner_id) VALUES (?, ?, ?, ?, ?)"
+    ).run(String(message), sentiment, (email || "").toLowerCase() || null, page, owner_id);
+    return { id: Number(r.lastInsertRowid) };
+  },
+
+  feedbackCount() {
+    return db.prepare("SELECT COUNT(*) c FROM feedback").get().c || 0;
+  },
+
+  feedbackAll() {
+    return db.prepare("SELECT * FROM feedback ORDER BY created_at DESC LIMIT 200").all();
   },
 
   // admin traction view: every family + their usage
