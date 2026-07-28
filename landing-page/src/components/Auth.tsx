@@ -200,13 +200,29 @@ export function AccountButton({
   )
 }
 
-/** Sign-in as a row inside a mobile menu. Renders nothing once signed in. */
-export function SignInMenuItem({ className }: { className: string }) {
-  if (!clerkConfigured()) return null
+/**
+ * The nav's way into the family dashboard.
+ *
+ * Signed out it opens the sign-in overlay rather than navigating. `#/family`
+ * used to be a plain link, so a visitor who clicked it out of curiosity landed
+ * on a page that immediately fired two authenticated requests, collected two
+ * 401s in the console, and showed them a sign-in wall — a broken-looking round
+ * trip to reach a dialog we can open in place. Same destination, no dead end.
+ */
+export function FamilyLink({ className }: { className: string }) {
+  const link = (
+    <a href="#/family" className={className}>
+      For families
+    </a>
+  )
+  if (!clerkConfigured()) return link
   return (
-    <SignedOut>
-      <OpenSignIn className={className}>Sign in</OpenSignIn>
-    </SignedOut>
+    <>
+      <SignedIn>{link}</SignedIn>
+      <SignedOut>
+        <OpenSignIn className={className}>Sign in</OpenSignIn>
+      </SignedOut>
+    </>
   )
 }
 

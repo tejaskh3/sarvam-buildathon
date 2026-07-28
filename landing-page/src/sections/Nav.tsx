@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import { Logo } from '../components/Logo'
-import { AccountButton, SignInMenuItem } from '../components/Auth'
+import { AccountButton, FamilyLink } from '../components/Auth'
 
 const links = [
   { href: '#personas', label: 'Who this is for' },
   { href: '#loop', label: 'How we remember' },
   { href: '#experience', label: 'How to use' },
+  { href: '#app', label: 'The app' },
   { href: '#pricing', label: 'Pricing' },
   /* The bar has no room for another pill (see the note by the buttons), so the
      one thing we most want clicked earns a dot instead of width. */
@@ -94,19 +95,14 @@ export function Nav() {
             filled control, and signed-in families get their avatar. On a phone
             just the CTA and the menu survive. */}
         <div className="flex shrink-0 items-center gap-3">
-          <a
-            href="#/family"
-            className="text-tx-secondary hover:text-tx hidden text-[13.5px] font-medium whitespace-nowrap transition-colors sm:inline-flex"
-          >
-            For families
-          </a>
+          <FamilyLink className="text-tx-secondary hover:text-tx hidden text-[13.5px] font-medium whitespace-nowrap transition-colors sm:inline-flex" />
           <a
             href="#/try"
             className="pill pill-primary !px-4 !py-[7px] !text-[13.5px] whitespace-nowrap"
           >
             Try now
           </a>
-          {/* signed out, "For families" above is the way in — no second button */}
+          {/* signed out, FamilyLink above is already the sign-in door */}
           <AccountButton signInClass={null} />
           <button
             aria-label={open ? 'Close menu' : 'Menu'}
@@ -173,14 +169,10 @@ export function Nav() {
                 open ? 'translate-y-0 opacity-100' : '-translate-y-1 opacity-0'
               }`}
             >
-              <a
-                href="#/family"
-                onClick={() => setOpen(false)}
-                className="text-tx-secondary block py-2.5 text-[15px] font-medium"
-              >
-                For families
-              </a>
-              <SignInMenuItem className="text-tx-secondary block py-2.5 text-left text-[15px] font-medium" />
+              {/* One row, both states: "For families" signed in, "Sign in"
+                  signed out. There used to be a separate sign-in row below
+                  this one, which signed out meant two rows onto one dialog. */}
+              <FamilyLink className="text-tx-secondary block py-2.5 text-[15px] font-medium" />
             </div>
           </div>
         </div>

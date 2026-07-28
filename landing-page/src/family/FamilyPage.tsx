@@ -25,7 +25,41 @@ import { PhotosTab } from './tabs/PhotosTab'
    tab is showing. Each panel lives in its own module.
    ------------------------------------------------------------------ */
 
+/* The header renders for everyone; everything that needs an account lives
+   inside <RequireFamilySignIn>, which mounts its children only once Clerk
+   says there is a session.
+
+   That boundary is load-bearing, not tidiness. The dashboard's state and its
+   two authenticated fetches used to sit out here, so simply opening #/family
+   while signed out fired GET /api/households and GET /api/people?phone=… with
+   no token — two 401s in the console before the sign-in card had even drawn,
+   and the second one carried a phone number left in localStorage by whoever
+   used the browser last. Mounting the data behind the wall means there is no
+   request to make until there is an identity to make it with. */
 export function FamilyPage() {
+  return (
+    <div className="bg-sf min-h-screen">
+      <header className="mx-auto flex w-full max-w-[1180px] items-center justify-between px-5 py-4 sm:px-8">
+        <a href="#top" onClick={() => (window.location.hash = '')} className="flex items-center gap-2">
+          <Logo size={30} />
+          <span className="font-deva text-tx text-[19px] leading-none">यादें</span>
+          <span className="text-tx-tertiary text-[13px] font-medium">Yaadein · Family</span>
+        </a>
+        <div className="flex gap-2">
+          <a href="#/try" className="pill pill-ghost !py-2 !text-[13px]">Talk to Yaadein</a>
+          <AccountButton />
+          <a href="#top" onClick={() => (window.location.hash = '')} className="pill pill-ghost !py-2 !text-[13px]">← Site</a>
+        </div>
+      </header>
+
+      <RequireFamilySignIn>
+        <FamilyDashboard />
+      </RequireFamilySignIn>
+    </div>
+  )
+}
+
+function FamilyDashboard() {
   const [people, setPeople] = useState<Person[]>([])
   const [pid, setPid] = useState<number | null>(null)
   const [tab, setTab] = useState<'briefing' | 'signals' | 'scribe' | 'memoir' | 'memories' | 'photos'>('briefing')
@@ -73,24 +107,12 @@ export function FamilyPage() {
   }, [phone])
 
   return (
-    <div className="bg-sf min-h-screen">
-      {!linking && (
-        <SignedInOnlyGate phone={phone} gateOpen={gateOpen} setPhone={setPhone} setGateOpen={setGateOpen} />
+    <>
+      {/* asking for a phone number on top of a sign-in card would be two walls
+          at once, so the gate only appears once we are past the first */}
+      {!linking && !phone && gateOpen && (
+        <PhoneGate api={API} onDone={setPhone} onClose={() => setGateOpen(false)} />
       )}
-      <header className="mx-auto flex w-full max-w-[1180px] items-center justify-between px-5 py-4 sm:px-8">
-        <a href="#top" onClick={() => (window.location.hash = '')} className="flex items-center gap-2">
-          <Logo size={30} />
-          <span className="font-deva text-tx text-[19px] leading-none">यादें</span>
-          <span className="text-tx-tertiary text-[13px] font-medium">Yaadein · Family</span>
-        </a>
-        <div className="flex gap-2">
-          <a href="#/try" className="pill pill-ghost !py-2 !text-[13px]">Talk to Yaadein</a>
-          <AccountButton />
-          <a href="#top" onClick={() => (window.location.hash = '')} className="pill pill-ghost !py-2 !text-[13px]">← Site</a>
-        </div>
-      </header>
-
-      <RequireFamilySignIn>
       <main className="mx-auto w-full max-w-[880px] px-5 pb-20 sm:px-8">
         <h1 className="font-season text-tx mt-4 text-[32px] tracking-tight">Before you visit</h1>
         <p className="text-tx-secondary mt-1 text-[15px]">
@@ -173,23 +195,6 @@ export function FamilyPage() {
           </>
         )}
       </main>
-      </RequireFamilySignIn>
-    </div>
-  )
-}
-
-/* The number prompt belongs after sign-in — asking for a phone number on top
-   of a sign-in card is two walls at once. */
-export function SignedInOnlyGate({
-  phone, gateOpen, setPhone, setGateOpen,
-}: {
-  phone: string | null; gateOpen: boolean
-  setPhone: (p: string | null) => void; setGateOpen: (b: boolean) => void
-}) {
-  if (phone || !gateOpen) return null
-  return (
-    <RequireFamilySignIn>
-      <PhoneGate api={API} onDone={setPhone} onClose={() => setGateOpen(false)} />
-    </RequireFamilySignIn>
+    </>
   )
 }
