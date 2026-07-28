@@ -1,15 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { PipecatClient } from '@pipecat-ai/client-js'
+import { SmallWebRTCTransport } from '@pipecat-ai/small-webrtc-transport'
 import { Orb, VoiceLabel, type Voice } from '../components/Orb'
 import { PhoneGate, clearStoredPhone, getStoredPhone } from '../components/PhoneGate'
 import { Logo } from '../components/Logo'
 
 /* ------------------------------------------------------------------
-   Try Yaadein — a live voice session.
-   One microphone button. Tap it (or press space) and talk: the orb
-   turns purple and says Listening. When Yaadein replies it turns pink
-   and says Speaking. Nothing else on screen.
-   API base comes from VITE_API_BASE so the deployed static site can
-   point at a hosted agent server; defaults to localhost for dev.
+   Try Yaadein — a continuous Pipecat WebRTC voice session.
+   The microphone stays live between turns, so speech can naturally
+   interrupt the agent and no audio has to be recorded/uploaded first.
    ------------------------------------------------------------------ */
 
 /* ⚠ DO NOT hardcode localhost as the production fallback.
@@ -21,9 +20,9 @@ const API =
   (import.meta.env.VITE_API_BASE as string | undefined) ??
   (import.meta.env.DEV ? 'http://localhost:3000' : '')
 
-const SILENCE_MS = 1400 // auto-send after this much quiet
-const SILENCE_RMS = 0.012
-const MAX_REC_MS = 25000 // Saaras REST caps at 30s — send before we hit it
+const REALTIME =
+  (import.meta.env.VITE_REALTIME_URL as string | undefined) ??
+  `${window.location.protocol}//${window.location.hostname}:7860`
 
 export function TryPage() {
   const [voice, setVoice] = useState<Voice>('idle')
@@ -55,202 +54,84 @@ export function TryPage() {
   const gateRef = useRef<typeof setGateOpen>(setGateOpen)
   gateRef.current = setGateOpen
   const voiceRef = useRef<Voice>('idle')
-  const busyRef = useRef(false)
   const levelRef = useRef(0)
   const sessionRef = useRef<string | null>(null)
-  const recRef = useRef<{ chunks: Float32Array[]; lastVoice: number; startedAt: number; hasVoice?: boolean; delayMs?: number } | null>(null)
-  /* recall-difficulty signal: when Yaadein's question finished playing —
-     the gap until their first word is how hard the question was */
-  const agentDoneAtRef = useRef<number | null>(null)
-  const audioCtxRef = useRef<AudioContext | null>(null)
-  /* dead-air kill: preloaded "achha…" clips, played the moment a turn is sent */
-  const acksRef = useRef<AudioBuffer[]>([])
-  /* barge-in: the currently playing reply, stoppable mid-word */
-  const playingRef = useRef<{ src: AudioBufferSourceNode; interrupted: boolean } | null>(null)
+  const clientRef = useRef<PipecatClient | null>(null)
+  const botAudioRef = useRef<HTMLAudioElement | null>(null)
+  const sessionStartRef = useRef<{
+    sessionId: string
+    text: string
+    language: string
+  } | null>(null)
 
   const setState = (v: Voice, b = false) => {
     voiceRef.current = v
-    busyRef.current = b
     setVoice(v)
     setBusy(b)
   }
 
-  const decode = useCallback(async (b64: string) => {
-    const ctx = audioCtxRef.current!
-    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
-    return ctx.decodeAudioData(bytes.buffer.slice(0))
-  }, [])
-
-  /* a short acknowledgment, no state change — covers the thinking gap */
-  const playAck = useCallback(() => {
-    const ctx = audioCtxRef.current
-    const acks = acksRef.current
-    if (!ctx || !acks.length) return
-    const src = ctx.createBufferSource()
-    src.buffer = acks[Math.floor(Math.random() * acks.length)]
-    src.connect(ctx.destination)
-    src.start()
-  }, [])
-
-  const play = useCallback(async (b64: string) => {
-    const ctx = audioCtxRef.current!
-    const buf = await decode(b64)
-    const src = ctx.createBufferSource()
-    src.buffer = buf
-    const analyser = ctx.createAnalyser()
-    analyser.fftSize = 512
-    src.connect(analyser)
-    analyser.connect(ctx.destination)
-    const data = new Uint8Array(analyser.frequencyBinCount)
-    const handle = { src, interrupted: false }
-    playingRef.current = handle
-    setState('speaking')
-    const meter = setInterval(() => {
-      analyser.getByteTimeDomainData(data)
-      let sum = 0
-      for (let i = 0; i < data.length; i++) {
-        const v = (data[i] - 128) / 128
-        sum += v * v
-      }
-      levelRef.current = Math.min(Math.sqrt(sum / data.length) * 4, 1)
-    }, 50)
-    await new Promise<void>((resolve) => {
-      src.onended = () => resolve()
-      src.start()
-    })
-    clearInterval(meter)
-    levelRef.current = 0
-    playingRef.current = null
-    agentDoneAtRef.current = Date.now()
-    /* barge-in: if she interrupted, the caller already owns the state */
-    if (!handle.interrupted) setState('idle')
-  }, [decode])
-
-  const finishRecording = useCallback(async () => {
-    const rec = recRef.current
-    if (!rec) return
-    recRef.current = null
-    levelRef.current = 0
-    const wav = encodeWav(rec.chunks, 16000)
-    if (!rec.hasVoice || wav.size < 8000) {
-      setState('idle') // nothing was said — no ack, no STT call
+  const handleServerMessage = useCallback((payload: unknown) => {
+    const wrapped = payload as { data?: unknown }
+    const message = (wrapped?.data ?? payload) as {
+      type?: string
+      transcript?: string
+      text?: string
+      contract?: Record<string, unknown>
+      message?: string
+    }
+    if (message.type === 'error') {
+      setError(message.message || 'The realtime voice service had a problem.')
       return
     }
-    setState('idle', true)
-    playAck() // she hears "achha…" instantly — never dead air while we think
-    try {
-      const r = await fetch(`${API}/api/turn`, {
-        method: 'POST',
-        headers: {
-          'x-session-id': sessionRef.current!,
-          ...(rec.delayMs != null ? { 'x-delay-ms': String(rec.delayMs) } : {}),
-        },
-        body: wav,
-      })
-      const j = await r.json()
-      if (j.error) throw new Error(j.error)
-      if (!j.transcript) {
-        setState('idle')
-        return
-      }
-      if (j.contract) setContract(j.contract)
-      setLines((l) => [
-        ...l,
-        { who: 'you', text: j.transcript },
-        { who: 'agent', text: j.text },
-      ])
-      await play(j.audio)
-      /* hands-free: when Yaadein finishes, the floor returns to them
-         automatically — no button between turns. Staying quiet ends the
-         loop gracefully (short/empty audio → idle). */
-      if (voiceRef.current === 'idle' && !busyRef.current) {
-        recRef.current = { chunks: [], lastVoice: Date.now(), startedAt: Date.now() }
-        setState('listening')
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-      setState('idle')
-    }
-  }, [play, playAck])
+    if (message.type !== 'turn' || !message.text) return
+    const reply = message.text
+    if (message.contract) setContract(message.contract)
+    setLines((current) => [
+      ...current,
+      ...(message.transcript ? [{ who: 'you' as const, text: message.transcript }] : []),
+      { who: 'agent', text: reply },
+    ])
+  }, [])
 
-  const ensureMic = useCallback(async () => {
-    if (audioCtxRef.current) return
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
-    })
-    const ctx = new AudioContext({ sampleRate: 16000 })
-    const src = ctx.createMediaStreamSource(stream)
-    const proc = ctx.createScriptProcessor(4096, 1, 1)
-    proc.onaudioprocess = (e) => {
-      const rec = recRef.current
-      if (!rec) return
-      const data = new Float32Array(e.inputBuffer.getChannelData(0))
-      rec.chunks.push(data)
-      let sum = 0
-      for (let i = 0; i < data.length; i++) sum += data[i] * data[i]
-      const rms = Math.sqrt(sum / data.length)
-      levelRef.current = Math.min(rms * 12, 1)
-      if (rms > SILENCE_RMS) {
-        if (!rec.hasVoice && agentDoneAtRef.current)
-          rec.delayMs = Math.max(0, Date.now() - agentDoneAtRef.current)
-        rec.lastVoice = Date.now()
-        rec.hasVoice = true
-      } else if (rec.hasVoice && Date.now() - rec.lastVoice > SILENCE_MS) {
-        void finishRecording() // they spoke, then went quiet → send
-      } else if (!rec.hasVoice && Date.now() - rec.startedAt > 6000) {
-        void finishRecording() // never spoke → give the floor back quietly
-      }
-      // STT rejects >30s — flush before the limit, mid-story if needed
-      if (Date.now() - rec.startedAt > MAX_REC_MS) void finishRecording()
-    }
-    src.connect(proc)
-    proc.connect(ctx.destination)
-    audioCtxRef.current = ctx
-    /* preload ack clips once the AudioContext exists */
-    fetch(`${API}/api/acks`)
-      .then((r) => r.json())
-      .then(async (j) => {
-        const bufs: AudioBuffer[] = []
-        for (const b64 of j.acks || []) {
-          const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
-          bufs.push(await ctx.decodeAudioData(bytes.buffer.slice(0)))
-        }
-        acksRef.current = bufs
-      })
-      .catch(() => { /* acks are progressive enhancement */ })
-  }, [finishRecording])
-
-  /* the one control: start talking, or stop and send.
-     Tapping while Yaadein speaks = barge-in: she stops mid-word,
-     the floor is yours, context is kept (A6). */
+  /* The first tap connects a continuous WebRTC session. Later taps only
+     mute/unmute it; speaking naturally while Yaadein talks is barge-in. */
   const toggle = useCallback(async () => {
-    if (busyRef.current) return
     if (!phoneRef.current) return void gateRef.current(true) // need the number first
-    if (voiceRef.current === 'speaking') {
-      const p = playingRef.current
-      if (p) {
-        p.interrupted = true
-        try { p.src.stop() } catch { /* already ended */ }
+    const connected = clientRef.current
+    if (connected?.connected) {
+      // Some browsers require one more user gesture before allowing WebRTC
+      // audio playback. If that happened, use this tap to unlock the speaker
+      // without unexpectedly muting the microphone.
+      const botAudio = botAudioRef.current
+      if (botAudio?.srcObject && botAudio.paused) {
+        try {
+          await botAudio.play()
+          setError(null)
+          return
+        } catch {
+          setError('Your browser is blocking speaker playback. Allow sound for this site and tap again.')
+          return
+        }
       }
-      agentDoneAtRef.current = Date.now() // barge-in = they answered instantly
-      recRef.current = { chunks: [], lastVoice: Date.now(), startedAt: Date.now() }
-      setState('listening')
+      const enable = !connected.isMicEnabled
+      await connected.enableMic(enable)
+      levelRef.current = 0
+      setState(enable ? 'listening' : 'idle')
       return
     }
-    if (voiceRef.current === 'listening') return void finishRecording()
+    if (busy) return
     setError(null)
+    setState('idle', true)
+    let client: PipecatClient | null = null
     try {
-      await ensureMic()
-      if (!sessionRef.current) {
-        setState('idle', true)
+      if (!sessionStartRef.current) {
         // the number IS the person — a returning number resumes its thread
         const r = await fetch(`${API}/api/session/start`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ phone: phoneRef.current }),
+          body: JSON.stringify({ phone: phoneRef.current, realtime: true }),
         })
         if (r.status === 403) {
-          // number fell off the allowlist — ask again
           clearStoredPhone()
           setPhone(null)
           setState('idle')
@@ -259,17 +140,87 @@ export function TryPage() {
         const j = await r.json()
         if (j.error) throw new Error(j.error)
         sessionRef.current = j.sessionId
+        sessionStartRef.current = {
+          sessionId: j.sessionId,
+          text: j.text,
+          language: j.language || 'hi-IN',
+        }
         if (j.theme) setTheme(j.theme)
         setLines((l) => [...l, { who: 'agent', text: j.text, photo: j.photo ?? undefined }])
-        await play(j.audio)
       }
-      recRef.current = { chunks: [], lastVoice: Date.now(), startedAt: Date.now() }
-      setState('listening')
+
+      const start = sessionStartRef.current
+      if (!start) throw new Error('Could not start the conversation')
+      const transport = new SmallWebRTCTransport()
+      client = new PipecatClient({
+        transport,
+        enableMic: true,
+        enableCam: false,
+        callbacks: {
+          onConnected: () => setState('listening'),
+          onDisconnected: () => {
+            levelRef.current = 0
+            clientRef.current = null
+            if (botAudioRef.current) botAudioRef.current.srcObject = null
+            setState('idle')
+          },
+          onError: (message) => {
+            const detail = (message as { data?: { message?: string } }).data?.message
+            setError(detail || 'The realtime voice connection had a problem.')
+          },
+          onDeviceError: (deviceError) => setError(deviceError.message),
+          onLocalAudioLevel: (level) => {
+            if (voiceRef.current !== 'speaking') levelRef.current = Math.min(level * 2.5, 1)
+          },
+          onRemoteAudioLevel: (level) => {
+            if (voiceRef.current === 'speaking') levelRef.current = Math.min(level * 2.5, 1)
+          },
+          onTrackStarted: (track, participant) => {
+            // SmallWebRTCTransport exposes the bot track but does not render it.
+            // The React Pipecat package normally supplies an audio player; this
+            // page uses client-js directly, so attach the remote track here.
+            if (track.kind !== 'audio' || participant?.local) return
+            const botAudio = botAudioRef.current
+            if (!botAudio) return
+            botAudio.srcObject = new MediaStream([track])
+            botAudio.muted = false
+            botAudio.volume = 1
+            void botAudio.play().catch(() => {
+              setError('Your browser is blocking speaker playback. Allow sound for this site and tap the microphone again.')
+            })
+          },
+          onUserStartedSpeaking: () => setState('listening'),
+          onUserStoppedSpeaking: () => setState('idle', true),
+          onBotStartedSpeaking: () => setState('speaking'),
+          onBotStoppedSpeaking: () => {
+            levelRef.current = 0
+            setState(client?.isMicEnabled ? 'listening' : 'idle')
+          },
+          onServerMessage: handleServerMessage,
+        },
+      })
+      clientRef.current = client
+      await client.initDevices()
+      // Register the custom Yaadein payload with Pipecat Runner first. The
+      // returned session ID then drives its session-scoped WebRTC offer route.
+      await client.startBotAndConnect({
+        endpoint: `${REALTIME}/start`,
+        requestData: {
+          transport: 'webrtc',
+          body: {
+            sessionId: start.sessionId,
+            opener: start.text,
+            language: start.language,
+          },
+        },
+      })
     } catch (e) {
+      if (client) await client.disconnect().catch(() => {})
+      clientRef.current = null
       setError(e instanceof Error ? e.message : String(e))
       setState('idle')
     }
-  }, [ensureMic, finishRecording, play])
+  }, [busy, handleServerMessage])
 
   /* space bar does exactly what the microphone does */
   useEffect(() => {
@@ -286,10 +237,21 @@ export function TryPage() {
     return () => window.removeEventListener('keydown', onKey)
   }, [toggle])
 
+  useEffect(
+    () => () => {
+      const client = clientRef.current
+      clientRef.current = null
+      if (client) void client.disconnect()
+      if (botAudioRef.current) botAudioRef.current.srcObject = null
+    },
+    [],
+  )
+
   const listening = voice === 'listening'
 
   return (
     <div className="bg-sf flex min-h-screen flex-col">
+      <audio ref={botAudioRef} autoPlay playsInline className="hidden" />
       {!phone && gateOpen && (
         <PhoneGate api={API} onDone={setPhone} onClose={() => setGateOpen(false)} forElder />
       )}
@@ -335,10 +297,14 @@ export function TryPage() {
         {/* the only control on the page */}
         <button
           onClick={() => void toggle()}
-          disabled={busy}
+          disabled={busy && !clientRef.current?.connected}
           aria-pressed={listening}
           aria-label={
-            voice === 'speaking' ? 'Interrupt and talk' : listening ? 'Stop and send' : 'Start talking'
+            clientRef.current?.connected
+              ? clientRef.current.isMicEnabled
+                ? 'Mute microphone'
+                : 'Unmute microphone'
+              : 'Start realtime conversation'
           }
           className={`-mt-6 flex h-[68px] w-[68px] items-center justify-center rounded-full border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-40 ${
             listening
@@ -352,7 +318,13 @@ export function TryPage() {
         <div className="mt-5 flex h-5 items-center">
           {voice === 'idle' ? (
             <span className="text-tx-tertiary font-mono text-[11px] tracking-[0.16em] uppercase">
-              {busy ? 'One moment' : sessionRef.current ? 'Paused — tap to continue talking' : 'Tap once to begin — then just talk'}
+              {busy
+                ? 'One moment'
+                : clientRef.current?.connected
+                  ? 'Paused — tap to unmute'
+                  : sessionRef.current
+                    ? 'Tap to reconnect'
+                    : 'Tap once to begin — then just talk'}
             </span>
           ) : (
             <VoiceLabel voice={voice} />
@@ -362,8 +334,8 @@ export function TryPage() {
         {error && (
           <p className="mt-4 rounded-lg bg-red-50 px-4 py-2 text-[13px] text-red-800">
             {error}{' '}
-            {API.includes('localhost') &&
-              '— is the agent server running? (node app/server.js)'}
+            {(API.includes('localhost') || REALTIME.includes('localhost')) &&
+              '— are both local services running? (npm start and npm run realtime)'}
           </p>
         )}
 
@@ -459,38 +431,4 @@ function MicIcon() {
 
 function Mark() {
   return <Logo size={34} />
-}
-
-/* ── wav encoding ── */
-
-function encodeWav(chunks: Float32Array[], rate: number) {
-  let len = 0
-  for (const c of chunks) len += c.length
-  const pcm = new Int16Array(len)
-  let o = 0
-  for (const c of chunks)
-    for (let i = 0; i < c.length; i++) {
-      const v = Math.max(-1, Math.min(1, c[i]))
-      pcm[o++] = v < 0 ? v * 0x8000 : v * 0x7fff
-    }
-  const buf = new ArrayBuffer(44 + pcm.length * 2)
-  const dv = new DataView(buf)
-  const W = (off: number, s: string) => {
-    for (let i = 0; i < s.length; i++) dv.setUint8(off + i, s.charCodeAt(i))
-  }
-  W(0, 'RIFF')
-  dv.setUint32(4, 36 + pcm.length * 2, true)
-  W(8, 'WAVE')
-  W(12, 'fmt ')
-  dv.setUint32(16, 16, true)
-  dv.setUint16(20, 1, true)
-  dv.setUint16(22, 1, true)
-  dv.setUint32(24, rate, true)
-  dv.setUint32(28, rate * 2, true)
-  dv.setUint16(32, 2, true)
-  dv.setUint16(34, 16, true)
-  W(36, 'data')
-  dv.setUint32(40, pcm.length * 2, true)
-  new Int16Array(buf, 44).set(pcm)
-  return new Blob([buf], { type: 'audio/wav' })
 }
