@@ -8,11 +8,11 @@ Built for the Sarvam Epoch Buildathon, July 2026. **Every model in the product i
 
 | | |
 |---|---|
-| **Live** | **https://www.yaadeinapp.com** |
-| Talk to it (the elder's screen) | [`#/try`](https://www.yaadeinapp.com/#/try) |
-| Family dashboard | [`#/family`](https://www.yaadeinapp.com/#/family) |
-| Live usage counters | [`#/stats`](https://www.yaadeinapp.com/#/stats) |
-| The first fifty seats | [`#/waitlist`](https://www.yaadeinapp.com/#/waitlist) |
+| **Live** | **https://sarvam-buildathon-production.up.railway.app** |
+| Talk to it (the elder's screen) | [`#/try`](https://sarvam-buildathon-production.up.railway.app/#/try) |
+| Family dashboard | [`#/family`](https://sarvam-buildathon-production.up.railway.app/#/family) |
+| Live usage counters | [`#/stats`](https://sarvam-buildathon-production.up.railway.app/#/stats) |
+| The first fifty seats | [`#/waitlist`](https://sarvam-buildathon-production.up.railway.app/#/waitlist) |
 | Demo number for reviewers | `1234567890` — or register any 10-digit number |
 
 ---
@@ -25,7 +25,7 @@ The five judging criteria, in your order, each with the section that answers it 
 |---|---|---|---|
 | 1 | **Impact of Sarvam's models** | [§1](#1--impact-of-sarvams-models) | The [turn pipeline diagram](#every-sarvam-call-is-on-the-critical-path) — four Sarvam calls sit on the critical path of a single conversational turn. Remove any one and there is no product. |
 | 2 | **Live, production-ready** | [§2](#2--live-and-production-ready) | Open the site and talk to it. Zero npm dependencies in the backend. 223 tests, green. |
-| 3 | **Real traction** | [§3](#3--real-traction) | [`#/stats`](https://www.yaadeinapp.com/#/stats) — unseeded public counters, straight from the production database. |
+| 3 | **Real traction** | [§3](#3--real-traction) | [`#/stats`](https://sarvam-buildathon-production.up.railway.app/#/stats) — unseeded public counters, straight from the production database. |
 | 4 | **Business impact** | [§4](#4--business-impact) | ₹1,499/month against a ₹40,000/month attendant who doesn't speak the elder's language. |
 | 5 | **Technical depth** | [§5](#5--technical-depth) | [Five things that are ours](#five-things-that-are-ours), starting with provenance-graded memory and contradiction quarantine. |
 
@@ -35,10 +35,10 @@ The five judging criteria, in your order, each with the section that answers it 
 
 Nothing here needs a key, an account, or our word for it.
 
-1. Open [`#/try`](https://www.yaadeinapp.com/#/try), enter `1234567890`, and **talk to it in Hindi.** No signup, no install — that is the elder's entire experience.
+1. Open [`#/try`](https://sarvam-buildathon-production.up.railway.app/#/try), enter `1234567890`, and **talk to it in Hindi.** No signup, no install — that is the elder's entire experience.
 2. Reload and talk again. It greets you by name and reopens the story you left unfinished.
-3. Open [`#/stats`](https://www.yaadeinapp.com/#/stats) for live usage counters, read straight off the production database and polled every 30 seconds. Nothing there is fixtured or seeded.
-4. Open [`#/family`](https://www.yaadeinapp.com/#/family) and note that it asks you to sign in. The family's data needs an account; the elder's conversation never does.
+3. Open [`#/stats`](https://sarvam-buildathon-production.up.railway.app/#/stats) for live usage counters, read straight off the production database and polled every 30 seconds. Nothing there is fixtured or seeded.
+4. Open [`#/family`](https://sarvam-buildathon-production.up.railway.app/#/family) and note that it asks you to sign in. The family's data needs an account; the elder's conversation never does.
 
 ---
 
@@ -119,7 +119,7 @@ Reserved prefixes keep test traffic away from real families: demo households use
 
 # 3 · Real traction
 
-**Live, public, unseeded counters: [`#/stats`](https://www.yaadeinapp.com/#/stats).** Read straight off the production database, polled every 30 seconds. Nothing is fixtured or seeded.
+**Live, public, unseeded counters: [`#/stats`](https://sarvam-buildathon-production.up.railway.app/#/stats).** Read straight off the production database, polled every 30 seconds. Nothing is fixtured or seeded.
 
 ### Read the clock, not just the count
 
