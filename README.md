@@ -1,5 +1,4 @@
 # Yaadein — यादें
-
 **A voice companion for elders living with memory loss, in the language they speak at home.**
 
 The elder taps one button and talks. Yaadein leads the conversation using Cognitive Stimulation Therapy themes, remembers what they said, and never tests their memory. Forgetting is met with warmth, not correction. The family gets a living memoir, clinical session notes, and a sixty-second briefing before each visit.
@@ -13,7 +12,10 @@ Built for the Sarvam Epoch Buildathon, July 2026. **Every model in the product i
 | Family dashboard | [`#/family`](https://sarvam-buildathon-production.up.railway.app/#/family) |
 | Live usage counters | [`#/stats`](https://sarvam-buildathon-production.up.railway.app/#/stats) |
 | The first fifty seats | [`#/waitlist`](https://sarvam-buildathon-production.up.railway.app/#/waitlist) |
-| Demo number for reviewers | `1234567890` — or register any 10-digit number |
+| Demo number for reviewers | `1234567890` — or register any 10-digit number | https://www.loom.com/share/35387defc56e4f5f80def0bc3c8c65e7
+| Demo number for reviewers | `1234567890` — or register any 10-digit number | https://www.loom.com/share/35387defc56e4f5f80def0bc3c8c65e7
+| Loom | https://www.loom.com/share/35387defc56e4f5f80def0bc3c8c65e7 | (watch live)[]
+
 
 ---
 
